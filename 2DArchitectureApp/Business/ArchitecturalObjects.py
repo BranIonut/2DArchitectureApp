@@ -97,7 +97,7 @@ class Wall(ArchitecturalObject):
         self.y2 = y2
         self.thickness = thickness
         self.layer = "structure"
-        self.color = "#2C3E50"
+        self.color = "#495867"
 
     def to_dict(self) -> Dict:
         data = super().to_dict()
@@ -122,7 +122,7 @@ class Wall(ArchitecturalObject):
         wall.id = data.get('id', str(uuid.uuid4()))
         wall.rotation = data.get('rotation', 0.0)
         wall.layer = data.get('layer', 'structure')
-        wall.color = data.get('color', '#2C3E50')
+        wall.color = data.get('color', '#495867')
         return wall
 
     def get_length(self) -> float:
@@ -137,7 +137,7 @@ class Door(ArchitecturalObject):
     def __init__(self, x: float, y: float, width: float = 80, height: float = 20):
         super().__init__(x, y, width, height)
         self.layer = "doors_windows"
-        self.color = "#8B4513"
+        self.color = "#A88F6E"
         self.opening_direction = "right"  # right, left
         self.opening_angle = 90  # grade
 
@@ -160,7 +160,7 @@ class Door(ArchitecturalObject):
         door.id = data.get('id', str(uuid.uuid4()))
         door.rotation = data.get('rotation', 0.0)
         door.layer = data.get('layer', 'doors_windows')
-        door.color = data.get('color', '#8B4513')
+        door.color = data.get('color', '#A88F6E')
         door.opening_direction = data.get('opening_direction', 'right')
         door.opening_angle = data.get('opening_angle', 90)
         return door
@@ -172,7 +172,7 @@ class Window(ArchitecturalObject):
     def __init__(self, x: float, y: float, width: float = 100, height: float = 20):
         super().__init__(x, y, width, height)
         self.layer = "doors_windows"
-        self.color = "#87CEEB"
+        self.color = "#7CB9E8"
 
     def to_dict(self) -> Dict:
         return super().to_dict()
@@ -188,7 +188,7 @@ class Window(ArchitecturalObject):
         window.id = data.get('id', str(uuid.uuid4()))
         window.rotation = data.get('rotation', 0.0)
         window.layer = data.get('layer', 'doors_windows')
-        window.color = data.get('color', '#87CEEB')
+        window.color = data.get('color', '#7CB9E8')
         return window
 
 
@@ -199,7 +199,7 @@ class Furniture(ArchitecturalObject):
                  furniture_type: str = "generic"):
         super().__init__(x, y, width, height)
         self.layer = "furniture"
-        self.color = "#A0522D"
+        self.color = "#587B7F"
         self.furniture_type = furniture_type  # bed, table, chair, etc.
         self.category = "generic"  # bedroom, living, kitchen, bathroom, office
 
@@ -223,7 +223,7 @@ class Furniture(ArchitecturalObject):
         furniture.id = data.get('id', str(uuid.uuid4()))
         furniture.rotation = data.get('rotation', 0.0)
         furniture.layer = data.get('layer', 'furniture')
-        furniture.color = data.get('color', '#A0522D')
+        furniture.color = data.get('color', '#587B7F')
         furniture.category = data.get('category', 'generic')
         return furniture
 

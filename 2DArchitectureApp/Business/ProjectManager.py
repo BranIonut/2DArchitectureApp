@@ -278,3 +278,25 @@ class ProjectManager:
 
     def get_snap_to_grid(self) -> bool:
         return self.current_project.snap_to_grid if self.current_project else True
+
+    def get_statistics(self) -> Dict:
+        if not self.current_project:
+            return {}
+
+        total_wall_length = sum(wall.get_length() for wall in self._walls)
+        total_wall_length_cm = self.coordinate_system.pixels_to_real_units(total_wall_length)
+
+        return {
+            'project_name': self.current_project.name,
+            'total_objects': len(self.get_all_objects()),
+            'walls_count': len(self._walls),
+            'doors_count': len(self._doors),
+            'windows_count': len(self._windows),
+            'furniture_count': len(self._furniture),
+            'total_wall_length': self.coordinate_system.format_distance(total_wall_length_cm),
+            'canvas_width': self.current_project.width,
+            'canvas_height': self.current_project.height,
+            'grid_size': self.current_project.grid_size,
+            'snap_to_grid': self.current_project.snap_to_grid,
+            'grid_visible': self.current_project.grid_visible
+        }

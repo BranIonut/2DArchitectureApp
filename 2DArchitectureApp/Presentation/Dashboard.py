@@ -15,7 +15,7 @@ class Dashboard(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("Floor Plan Architecture")
-        self.setGeometry(100, 100, 1000, 700)
+        self.setGeometry(100, 100, 1400, 800)
 
         # Stacked widget pentru managementul paginilor
         self.stacked_widget = QStackedWidget()
