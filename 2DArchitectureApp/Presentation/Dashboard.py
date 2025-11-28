@@ -1,8 +1,8 @@
 from PyQt5.QtWidgets import (QMainWindow, QStackedWidget)
 
-from Presentation.HelpPage import HelpPage
-from Presentation.MainPage import MainPage
-from Presentation.WorkPage import WorkPage
+from .HelpPage import HelpPage
+from .MainPage import MainPage
+from .WorkPage import WorkPage
 
 
 class Dashboard(QMainWindow):

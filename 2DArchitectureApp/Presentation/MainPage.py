@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QPushButton, QLabel)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
-from Presentation.Page import Page
+from .Page import Page
 
 
 class MainPage(Page):
