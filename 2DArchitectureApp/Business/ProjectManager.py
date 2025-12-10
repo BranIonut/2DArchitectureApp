@@ -7,7 +7,6 @@ from .CoordinateSystem import CoordinateSystem
 
 
 class ProjectManager:
-    #singelton pt proiectul activ
     _instance = None
 
     def __new__(cls):
@@ -22,6 +21,8 @@ class ProjectManager:
 
         self._initialized = True
         self.current_project: Optional[Project] = None
+
+        self.view_scale: float = 1.0
         self.coordinate_system = CoordinateSystem(grid_size=10, scale=1.0)
 
         # cache-uri pentru obiecte
@@ -37,15 +38,33 @@ class ProjectManager:
         self._history: List[Dict] = []
         self._history_index = -1
 
+    def set_view_scale(self, new_scale: float):
+
+        self.view_scale = max(0.1, min(new_scale, 5.0))
+
+    def get_view_scale(self) -> float:
+        return self.view_scale
+
+    def world_to_screen(self, value: float) -> float:
+
+        return value * self.view_scale
+
+    def screen_to_world(self, value: float) -> float:
+
+        return value / self.view_scale
+
+    def get_scaled_grid_size(self) -> int:
+
+        base_size = self.current_project.grid_size if self.current_project else 10
+        return int(base_size * self.view_scale)
+
     def create_new_project(self, name: str = "Proiect Nou",
                            width: int = 1000, height: int = 800) -> Project:
-        #creare proiect nou
         self.current_project = Project(name, width, height)
         self._clear_caches()
         return self.current_project
 
     def load_project(self, filepath: str) -> bool:
-        #incarca proiect intr un fisier
         project = Project.load(filepath)
         if project:
             self.current_project = project

@@ -1,24 +1,43 @@
+import os
+import sys
+
 from PyQt5.QtWidgets import (
     QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QWidget,
-    QGroupBox, QScrollArea, QMessageBox, QFileDialog, QSpinBox,
-    QCheckBox, QSlider, QComboBox
+    QGroupBox, QMessageBox, QFileDialog, QSpinBox,
+    QCheckBox
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QPainter, QColor, QPen, QBrush
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
-from Presentation.Page import Page
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from .Page import Page
 from Business.ProjectManager import ProjectManager
 
 
 class SimpleCanvas(QWidget):
+    mouse_moved_signal = pyqtSignal(int, int)
+    project_changed_signal = pyqtSignal()
+    status_message_signal = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self.offset_x = 0
+        self.offset_y = 0
+
+        self.is_panning = False
+        self.last_pan_x = 0
+        self.last_pan_y = 0
+
         self.pm = ProjectManager()
         self.setMinimumSize(600, 400)
         self.setStyleSheet("background-color: white;")
-
         self.setMouseTracking(True)
+
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+
         self.mouse_x = 0
         self.mouse_y = 0
 
@@ -35,191 +54,312 @@ class SimpleCanvas(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        if self.pm.get_grid_visible():
-            self.draw_grid(painter)
+        painter.fillRect(self.rect(), Qt.white)
 
-        self.draw_objects(painter)
+        scale = self.pm.get_view_scale()
+
+        painter.translate(self.offset_x, self.offset_y)
+
+        visible_width = self.width()
+        visible_height = self.height()
+
+        if self.pm.get_grid_visible():
+            self.draw_grid(painter, visible_width, visible_height, scale)
+
+        self.draw_objects(painter, scale)
 
         if self.is_drawing and self.current_tool:
-            self.draw_preview(painter)
+            self.draw_preview(painter, scale)
 
-    def draw_grid(self, painter):
+    def draw_grid(self, painter, width, height, scale):
         grid_size = self.pm.coordinate_system.grid_size
+        step = int(grid_size * scale)
 
-        pen = QPen(QColor(220, 220, 220))
-        pen.setWidth(1)
-        painter.setPen(pen)
+        if step <= 2:
+            return
 
-        for x in range(0, self.width(), grid_size):
-            painter.drawLine(x, 0, x, self.height())
 
-        for y in range(0, self.height(), grid_size):
-            painter.drawLine(0, y, self.width(), y)
+        start_x = -self.offset_x
+        start_y = -self.offset_y
+        end_x = start_x + width
+        end_y = start_y + height
 
-        pen.setColor(QColor(180, 180, 180))
-        pen.setWidth(2)
-        painter.setPen(pen)
+        first_line_x = start_x - (start_x % step)
+        first_line_y = start_y - (start_y % step)
 
-        for x in range(0, self.width(), grid_size * 10):
-            painter.drawLine(x, 0, x, self.height())
+        pen_main = QPen(QColor(220, 220, 220))
+        pen_main.setWidth(0)
 
-        for y in range(0, self.height(), grid_size * 10):
-            painter.drawLine(0, y, self.width(), y)
+        pen_bold = QPen(QColor(180, 180, 180))
+        pen_bold.setWidth(0)
 
-    def draw_objects(self, painter):
+        x = first_line_x
+        while x < end_x + step:
+            grid_index = round(x / step)
+            if grid_index % 10 == 0:
+                painter.setPen(pen_bold)
+            else:
+                painter.setPen(pen_main)
+
+            painter.drawLine(int(x), int(start_y), int(x), int(end_y))
+            x += step
+
+        y = first_line_y
+        while y < end_y + step:
+            grid_index = round(y / step)
+            if grid_index % 10 == 0:
+                painter.setPen(pen_bold)
+            else:
+                painter.setPen(pen_main)
+
+            painter.drawLine(int(start_x), int(y), int(end_x), int(y))
+            y += step
+
+    def draw_objects(self, painter, scale):
+
+        def to_screen(val):
+            return int(val * scale)
+
         for wall in self.pm.get_walls():
             color = QColor(wall.color) if not wall.selected else QColor("#FF5722")
             pen = QPen(color)
-            pen.setWidth(int(wall.thickness) if not wall.selected else int(wall.thickness) + 4)
+            thickness = to_screen(wall.thickness)
+            pen.setWidth(thickness if not wall.selected else thickness + 4)
             painter.setPen(pen)
-            painter.drawLine(int(wall.x1), int(wall.y1), int(wall.x2), int(wall.y2))
+            painter.drawLine(to_screen(wall.x1), to_screen(wall.y1),
+                             to_screen(wall.x2), to_screen(wall.y2))
 
         for door in self.pm.get_doors():
+            sx = to_screen(door.x)
+            sy = to_screen(door.y)
+            sw = to_screen(door.width)
+            sh = to_screen(door.height)
+
             color = QColor(door.color) if not door.selected else QColor("#FF5722")
             painter.setPen(QPen(color, 2))
             painter.setBrush(QBrush(color))
-            painter.drawRect(int(door.x), int(door.y), int(door.width), int(door.height))
+            painter.drawRect(sx, sy, sw, sh)
 
             if not door.selected:
                 painter.setPen(QPen(color, 1))
-                painter.drawArc(int(door.x), int(door.y), int(door.width), int(door.width), 0, 90 * 16)
+                painter.drawArc(sx, sy, sw, sw, 0, 90 * 16)
 
-        for window in self.pm.get_windows():
-            color = QColor(window.color) if not window.selected else QColor("#FF5722")
+        for win in self.pm.get_windows():
+            sx, sy = to_screen(win.x), to_screen(win.y)
+            sw, sh = to_screen(win.width), to_screen(win.height)
+
+            color = QColor(win.color) if not win.selected else QColor("#FF5722")
             painter.setPen(QPen(color, 2))
             painter.setBrush(QBrush(QColor(173, 216, 230, 150)))
-            painter.drawRect(int(window.x), int(window.y), int(window.width), int(window.height))
+            painter.drawRect(sx, sy, sw, sh)
 
-            mid_x = int(window.x + window.width / 2)
-            mid_y = int(window.y + window.height / 2)
-            painter.drawLine(mid_x, int(window.y), mid_x, int(window.y + window.height))
-            painter.drawLine(int(window.x), mid_y, int(window.x + window.width), mid_y)
+        for furn in self.pm.get_furniture():
+            sx, sy = to_screen(furn.x), to_screen(furn.y)
+            sw, sh = to_screen(furn.width), to_screen(furn.height)
 
-        for furniture in self.pm.get_furniture():
-            color = QColor(furniture.color) if not furniture.selected else QColor("#FF5722")
+            color = QColor(furn.color) if not furn.selected else QColor("#FF5722")
             painter.setPen(QPen(color, 2))
-            painter.setBrush(QBrush(QColor(furniture.color)))
-            painter.drawRect(int(furniture.x), int(furniture.y), int(furniture.width), int(furniture.height))
+            painter.setBrush(QBrush(QColor(furn.color)))
+            painter.drawRect(sx, sy, sw, sh)
 
-            painter.setPen(QPen(Qt.white))
-            painter.setFont(QFont('Arial', 8))
-            painter.drawText(int(furniture.x + 5), int(furniture.y + 15), furniture.furniture_type)
+            if scale > 0.5:
+                painter.setPen(QPen(Qt.white))
+                painter.drawText(sx + 5, sy + 15, furn.furniture_type)
 
-    def draw_preview(self, painter):
+    def draw_preview(self, painter, scale):
         pen = QPen(QColor(100, 100, 100))
         pen.setStyle(Qt.DashLine)
         pen.setWidth(2)
         painter.setPen(pen)
 
+        start_screen_x = int(self.start_x * scale)
+        start_screen_y = int(self.start_y * scale)
+
+        mouse_screen_x = int(self.mouse_x - self.offset_x)
+        mouse_screen_y = int(self.mouse_y - self.offset_y)
+        # --------------------------------------------------------
+
         if self.current_tool == "wall":
-            painter.drawLine(int(self.start_x), int(self.start_y),
-                             int(self.mouse_x), int(self.mouse_y))
+            painter.drawLine(start_screen_x, start_screen_y, mouse_screen_x, mouse_screen_y)
+
         elif self.current_tool in ["door", "window", "furniture"]:
-            width = abs(self.mouse_x - self.start_x)
-            height = abs(self.mouse_y - self.start_y)
-            x = min(self.start_x, self.mouse_x)
-            y = min(self.start_y, self.mouse_y)
-            painter.drawRect(int(x), int(y), int(width), int(height))
+            w = abs(mouse_screen_x - start_screen_x)
+            h = abs(mouse_screen_y - start_screen_y)
+            x = min(start_screen_x, mouse_screen_x)
+            y = min(start_screen_y, mouse_screen_y)
+            painter.drawRect(x, y, w, h)
 
     def mousePressEvent(self, event):
-        x, y = event.x(), event.y()
+        screen_x, screen_y = event.x(), event.y()
+
+        if event.button() == Qt.MiddleButton:
+            self.is_panning = True
+            self.last_pan_x = event.x()
+            self.last_pan_y = event.y()
+            self.setCursor(Qt.ClosedHandCursor)
+            return
+
+        if event.button() != Qt.LeftButton:
+            return
+
+        scale = self.pm.get_view_scale()
+        world_x = (event.x() - self.offset_x) / scale
+        world_y = (event.y() - self.offset_y) / scale
 
         if event.button() != Qt.LeftButton:
             return
 
         if self.current_tool:
             self.is_drawing = True
-
             if self.pm.get_snap_to_grid():
-                self.start_x, self.start_y = self.pm.coordinate_system.snap_to_grid(x, y)
+                self.start_x, self.start_y = self.pm.coordinate_system.snap_to_grid(world_x, world_y)
             else:
-                self.start_x = x
-                self.start_y = y
+                self.start_x = world_x
+                self.start_y = world_y
             self.update()
             return
 
-        obj = self.pm.find_object_at_position(x, y)
-
+        obj = self.pm.find_object_at_position(world_x, world_y)
         self.pm.select_object(obj)
 
         if obj:
             self.is_moving = True
-            self.drag_start_x = x
-            self.drag_start_y = y
+            self.drag_start_x = world_x
+            self.drag_start_y = world_y
 
         self.update()
-        if self.parent():
-            self.parent().parent().refresh_statistics()
+        self.project_changed_signal.emit()
 
     def mouseMoveEvent(self, event):
+
+        if self.is_panning:
+            delta_x = event.x() - self.last_pan_x
+            delta_y = event.y() - self.last_pan_y
+
+            self.offset_x += delta_x
+            self.offset_y += delta_y
+
+            self.last_pan_x = event.x()
+            self.last_pan_y = event.y()
+
+            self.update()
+            return
+
         self.mouse_x = event.x()
         self.mouse_y = event.y()
 
-        if self.parent() and self.parent().parent():
-            self.parent().parent().update_mouse_position(self.mouse_x, self.mouse_y)
+        scale = self.pm.get_view_scale()
+        world_x = (self.mouse_x - self.offset_x) / scale
+        world_y = (self.mouse_y - self.offset_y) / scale
+
+        self.mouse_moved_signal.emit(int(world_x), int(world_y))
 
         if self.is_drawing:
             self.update()
 
         elif self.is_moving and self.pm.get_selected_object():
-            dx = self.mouse_x - self.drag_start_x
-            dy = self.mouse_y - self.drag_start_y
-
+            dx = world_x - self.drag_start_x
+            dy = world_y - self.drag_start_y
             self.pm.translate_selected(dx, dy)
-
-            self.drag_start_x = self.mouse_x
-            self.drag_start_y = self.mouse_y
-
+            self.drag_start_x = world_x
+            self.drag_start_y = world_y
             self.update()
 
     def mouseReleaseEvent(self, event):
+
+        if event.button() == Qt.MiddleButton:
+            self.is_panning = False
+            self.setCursor(Qt.ArrowCursor)
+            return
+
         if event.button() == Qt.LeftButton:
+
+            scale = self.pm.get_view_scale()
+
+            raw_end_x = (event.x() - self.offset_x) / scale
+            raw_end_y = (event.y() - self.offset_y) / scale
 
             if self.is_moving:
                 self.is_moving = False
-
                 self.pm._sync_to_project()
 
                 if self.pm.get_snap_to_grid() and self.pm.get_selected_object():
                     obj = self.pm.get_selected_object()
-                    snapped_x, snapped_y = self.pm.coordinate_system.snap_to_grid(obj.x, obj.y)
-                    self.pm.translate_selected(snapped_x - obj.x, snapped_y - obj.y)
+                    sx, sy = self.pm.coordinate_system.snap_to_grid(obj.x, obj.y)
+                    self.pm.translate_selected(sx - obj.x, sy - obj.y)
 
                 self.update()
-                if self.parent() and self.parent().parent():
-                    self.parent().parent().refresh_statistics()
-                    self.parent().parent().lbl_status.setText("Obiect mutat cu succes")
+                self.project_changed_signal.emit()
+                self.status_message_signal.emit("Obiect mutat cu succes")
                 return
 
             if self.is_drawing:
                 self.is_drawing = False
 
-                end_x, end_y = event.x(), event.y()
+                end_x = raw_end_x
+                end_y = raw_end_y
+
                 if self.pm.get_snap_to_grid():
                     end_x, end_y = self.pm.coordinate_system.snap_to_grid(end_x, end_y)
 
                 if self.current_tool == "wall":
                     self.pm.add_wall(self.start_x, self.start_y, end_x, end_y)
                 elif self.current_tool == "door":
-                    width = abs(end_x - self.start_x)
-                    height = abs(end_y - self.start_y)
-                    self.pm.add_door(min(self.start_x, end_x), min(self.start_y, end_y),
-                                     max(width, 80), max(height, 20))
+                    w = abs(end_x - self.start_x)
+                    h = abs(end_y - self.start_y)
+                    self.pm.add_door(min(self.start_x, end_x), min(self.start_y, end_y), w, h)
                 elif self.current_tool == "window":
-                    width = abs(end_x - self.start_x)
-                    height = abs(end_y - self.start_y)
-                    self.pm.add_window(min(self.start_x, end_x), min(self.start_y, end_y),
-                                       max(width, 100), max(height, 20))
+                    w = abs(end_x - self.start_x)
+                    h = abs(end_y - self.start_y)
+                    self.pm.add_window(min(self.start_x, end_x), min(self.start_y, end_y), w, h)
                 elif self.current_tool == "furniture":
-                    width = abs(end_x - self.start_x)
-                    height = abs(end_y - self.start_y)
-                    self.pm.add_furniture(min(self.start_x, end_x), min(self.start_y, end_y),
-                                          max(width, 50), max(height, 50), "mobilier")
+                    w = abs(end_x - self.start_x)
+                    h = abs(end_y - self.start_y)
+                    self.pm.add_furniture(min(self.start_x, end_x), min(self.start_y, end_y), w, h, "mobilier")
 
                 self.update()
-                if self.parent() and self.parent().parent():
-                    self.parent().parent().refresh_statistics()
-                    self.parent().parent().lbl_status.setText(f"Obiect '{self.current_tool}' adăugat")
+                self.project_changed_signal.emit()
+                self.status_message_signal.emit(f"Obiect '{self.current_tool}' adăugat")
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.pixelDelta().y()
+
+        if delta == 0:
+            return
+
+        modifiers = event.modifiers()
+
+        if modifiers & Qt.ControlModifier:
+            old_scale = self.pm.get_view_scale()
+            mouse_x = event.x()
+            mouse_y = event.y()
+
+            world_x = (mouse_x - self.offset_x) / old_scale
+            world_y = (mouse_y - self.offset_y) / old_scale
+
+            if delta > 0:
+                factor = 1.1
+            else:
+                factor = 0.9
+
+            new_scale = old_scale * factor
+
+            new_scale = max(0.1, min(new_scale, 10.0))
+
+            self.pm.set_view_scale(new_scale)
+
+            self.offset_x = mouse_x - (world_x * new_scale)
+            self.offset_y = mouse_y - (world_y * new_scale)
+
+            self.update()
+
+            self.status_message_signal.emit(f"Zoom: {new_scale:.2f}x")
+
+            event.accept()
+        else:
+            event.ignore()
 
 
 class WorkPage(Page):
@@ -227,8 +367,8 @@ class WorkPage(Page):
     def init_ui(self):
         self.pm = ProjectManager()
 
-        if not self.pm.current_project:
-            self.pm.create_new_project("Proiect Nou", width=1000, height=800)
+        if not self.pm:
+            self.pm.__init__("Proiect Nou", width=1000, height=800)
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -262,6 +402,11 @@ class WorkPage(Page):
         main_layout.addWidget(footer)
 
         self.setLayout(main_layout)
+
+        self.canvas.status_message_signal.connect(self.lbl_status.setText)
+
+        self.canvas.mouse_moved_signal.connect(self.update_mouse_position)
+        self.canvas.project_changed_signal.connect(self.refresh_statistics)
 
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_statistics)
@@ -390,7 +535,7 @@ class WorkPage(Page):
         grid_size_layout = QHBoxLayout()
         grid_size_layout.addWidget(QLabel("Dimensiune:"))
         self.grid_size_spin = QSpinBox()
-        self.grid_size_spin.setRange(5, 50)
+        self.grid_size_spin.setRange(10, 30)
         self.grid_size_spin.setValue(10)
         self.grid_size_spin.valueChanged.connect(self.change_grid_size)
         grid_size_layout.addWidget(self.grid_size_spin)
@@ -534,6 +679,7 @@ class WorkPage(Page):
 
     def change_grid_size(self, value):
         self.pm.set_grid_size(value)
+
         self.canvas.update()
         self.refresh_statistics()
 

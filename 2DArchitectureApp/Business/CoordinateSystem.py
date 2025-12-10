@@ -91,12 +91,12 @@ class CoordinateSystem:
 
     def set_grid_size(self, size: int):
         if size <= 0:
-            raise ValueError("Dimensiunea grilei trebuie să fie pozitivă")
+            raise ValueError("Dimensiunea grilei trebuie să fie pozitiva")
         self.grid_size = size
 
     def set_scale(self, scale: float):
         if scale <= 0:
-            raise ValueError("Scala trebuie să fie pozitivă")
+            raise ValueError("Scala trebuie să fie pozitiva")
         self.scale = scale
 
     def get_grid_spacing_cm(self) -> float:
