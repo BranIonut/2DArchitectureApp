@@ -1,7 +1,7 @@
 import uuid
 from typing import Dict, Tuple, Optional
 from enum import Enum
-
+import math
 
 class ObjectType(Enum):
     #tipuri obiecte
@@ -74,11 +74,28 @@ class ArchitecturalObject:
     def set_rotation(self, angle: float):
         #rotatie obiect
         self.rotation = angle % 360
-
+    #modificare pt rotire
     def contains_point(self, px: float, py: float) -> bool:
         #punctul e in interiorul obiectului?
-        return (self.x <= px <= self.x + self.width and
-                self.y <= py <= self.y + self.height)
+        #return (self.x <= px <= self.x + self.width and
+         #       self.y <= py <= self.y + self.height)
+        cx = self.x + self.width / 2
+        cy = self.y + self.height / 2
+
+        dx = px - cx
+        dy = py - cy
+
+        angle = -math.radians(self.rotation)
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+
+        local_x = dx * cos_a - dy * sin_a
+        local_y = dx * sin_a + dy * cos_a
+
+        hw = self.width / 2
+        hh = self.height / 2
+
+        return (-hw <= local_x <= hw and -hh <= local_y <= hh)
 
 
 class Wall(ArchitecturalObject):

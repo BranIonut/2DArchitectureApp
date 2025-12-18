@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 
@@ -7,6 +8,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from Business.ArchitecturalObjects import Transform
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,8 +16,10 @@ from .Page import Page
 from Business.ProjectManager import ProjectManager
 
 
-
-
+# =====================================================================
+# CANVAS
+# =====================================================================
+#MODIFICARE ROTIRE
 class SimpleCanvas(QWidget):
     mouse_moved_signal = pyqtSignal(int, int)
     project_changed_signal = pyqtSignal()
@@ -24,6 +28,9 @@ class SimpleCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        self.is_rotating = False
+        self.rotate_start_angle = 0.0
+        self.initial_rotation = 0.0
         self.pm = ProjectManager()
 
         self.offset_x = 0
@@ -48,8 +55,7 @@ class SimpleCanvas(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
 
-
-
+    # =============================== DRAW ===============================
     def paintEvent(self, e):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
@@ -104,10 +110,11 @@ class SimpleCanvas(QWidget):
             painter.setPen(pen_bold if idx % 10 == 0 else pen_main)
             painter.drawLine(int(start_x), int(y), int(end_x), int(y))
             y += step
-
+    #MODIFICARE PT ROTIRE
     def draw_objects(self, painter, scale: float):
         to_scr = lambda v: int(v * scale)
 
+        # WALLS
         for w in self.pm._walls:
             color = QColor("#FF5722") if w.selected else QColor(w.color)
             pen = QPen(color)
@@ -115,7 +122,17 @@ class SimpleCanvas(QWidget):
             painter.setPen(pen)
             painter.drawLine(to_scr(w.x1), to_scr(w.y1), to_scr(w.x2), to_scr(w.y2))
 
+        # DOORS
         for d in self.pm._doors:
+
+            painter.save()
+            cx = (d.x + d.width / 2) * scale
+            cy = (d.y + d.height / 2) * scale
+
+            painter.translate(cx, cy)
+            painter.rotate(d.rotation)
+            painter.translate(-cx, -cy)
+
             sx, sy = to_scr(d.x), to_scr(d.y)
             sw, sh = to_scr(d.width), to_scr(d.height)
             color = QColor("#FF5722") if d.selected else QColor(d.color)
@@ -123,7 +140,19 @@ class SimpleCanvas(QWidget):
             painter.setBrush(QBrush(color))
             painter.drawRect(sx, sy, sw, sh)
 
+            painter.restore()
+
+        # WINDOWS
         for w in self.pm._windows:
+            painter.save()
+
+            cx = (w.x + w.width / 2) * scale
+            cy = (w.y + w.height / 2) * scale
+
+            painter.translate(cx, cy)
+            painter.rotate(w.rotation)
+            painter.translate(-cx, -cy)
+
             sx, sy = to_scr(w.x), to_scr(w.y)
             sw, sh = to_scr(w.width), to_scr(w.height)
             color = QColor("#FF5722") if w.selected else QColor(w.color)
@@ -131,13 +160,27 @@ class SimpleCanvas(QWidget):
             painter.setBrush(QBrush(QColor(173, 216, 230, 150)))
             painter.drawRect(sx, sy, sw, sh)
 
+            painter.restore()
+
+        # FURNITURE
         for f in self.pm._furniture:
+            painter.save()
+
+            cx = (f.x + f.width / 2) * scale
+            cy = (f.y + f.height / 2) * scale
+
+            painter.translate(cx, cy)
+            painter.rotate(f.rotation)
+            painter.translate(-cx, -cy)
+
             sx, sy = to_scr(f.x), to_scr(f.y)
             sw, sh = to_scr(f.width), to_scr(f.height)
             color = QColor("#FF5722") if f.selected else QColor(f.color)
             painter.setPen(QPen(color, 2))
             painter.setBrush(QBrush(color))
             painter.drawRect(sx, sy, sw, sh)
+
+            painter.restore()
 
     def draw_preview(self, painter, scale: float):
         painter.setPen(QPen(QColor(100, 100, 100), 2, Qt.DashLine))
@@ -157,7 +200,8 @@ class SimpleCanvas(QWidget):
                 abs(my - sy)
             )
 
-
+    # =============================== MOUSE ==============================
+    #MODIFICARE ROTIRE
     def mousePressEvent(self, e):
         scale = self.pm.get_view_scale()
 
@@ -168,12 +212,27 @@ class SimpleCanvas(QWidget):
             self.setCursor(Qt.ClosedHandCursor)
             return
 
+        if e.button() == Qt.RightButton and self.pm.selected_object:
+            scale = self.pm.get_view_scale()
+            wx = (e.x() - self.offset_x) / scale
+            wy = (e.y() - self.offset_y) / scale
+
+            obj = self.pm.selected_object
+            cx, cy = obj.get_center()
+
+            self.is_rotating = True
+            self.rotate_start_angle = self._angle_to_mouse(cx, cy, wx, wy)
+            self.initial_rotation = obj.rotation
+            return
+
         if e.button() != Qt.LeftButton:
             return
 
         wx = (e.x() - self.offset_x) / scale
         wy = (e.y() - self.offset_y) / scale
 
+
+        # DRAW MODE
         if self.current_tool:
             if self.pm.current_project and self.pm.current_project.snap_to_grid:
                 wx, wy = self.pm.coordinate_system.snap_to_grid(wx, wy)
@@ -182,6 +241,7 @@ class SimpleCanvas(QWidget):
             self.update()
             return
 
+        # SELECT MODE
         obj = self.pm.find_object_at(wx, wy)
         self.pm.select_object(obj)
 
@@ -192,7 +252,7 @@ class SimpleCanvas(QWidget):
 
         self.project_changed_signal.emit()
         self.update()
-
+    #MODIFICARE ROTIRE
     def mouseMoveEvent(self, e):
         self.mouse_x = e.x()
         self.mouse_y = e.y()
@@ -213,6 +273,23 @@ class SimpleCanvas(QWidget):
             self.update()
             return
 
+        if self.is_rotating and self.pm.selected_object:
+            scale = self.pm.get_view_scale()
+            wx = (e.x() - self.offset_x) / scale
+            wy = (e.y() - self.offset_y) / scale
+
+            obj = self.pm.selected_object
+            cx, cy = obj.get_center()
+
+            current_angle = self._angle_to_mouse(cx, cy, wx, wy)
+            delta = current_angle - self.rotate_start_angle
+
+            Transform.rotate(obj, delta)
+            obj.rotation = (self.initial_rotation + delta) % 360
+
+            self.update()
+            return
+
         if self.is_drawing:
             self.update()
             return
@@ -224,10 +301,14 @@ class SimpleCanvas(QWidget):
             self.drag_start_x = wx
             self.drag_start_y = wy
             self.update()
-
+    #MODIFICARE ROTIRE
     def mouseReleaseEvent(self, e):
         scale = self.pm.get_view_scale()
-
+        if e.button() == Qt.RightButton:
+            self.is_rotating = False
+            self.project_changed_signal.emit()
+            self.update()
+            return
         if e.button() == Qt.MiddleButton:
             self.is_panning = False
             self.setCursor(Qt.ArrowCursor)
@@ -243,6 +324,7 @@ class SimpleCanvas(QWidget):
         if self.is_moving:
             self.is_moving = False
 
+            # FIX CRUCIAL – PREVINE DESENAREA DUPĂ MUTARE
             self.is_drawing = False
             self.current_tool = None
 
@@ -250,6 +332,7 @@ class SimpleCanvas(QWidget):
             self.update()
             return
 
+        # FINISH DRAW
         if self.is_drawing and self.current_tool:
             self.is_drawing = False
 
@@ -280,6 +363,7 @@ class SimpleCanvas(QWidget):
     # =============================== WHEEL ==============================
 
     def wheelEvent(self, e):
+        # Ctrl + scroll = zoom
         if not (e.modifiers() & Qt.ControlModifier):
             e.ignore()
             return
@@ -302,10 +386,20 @@ class SimpleCanvas(QWidget):
         self.status_message_signal.emit(f"Zoom: {new_scale:.2f}x")
         self.update()
 
+#=================================Rotire=========================
 
+    def _angle_to_mouse(self, cx, cy, mx, my):
+        dx = mx - cx
+        dy = my - cy
+        return math.degrees(math.atan2(dy, dx))
 
+# =====================================================================
+# WORKPAGE
+# =====================================================================
 
 class WorkPage(Page):
+
+    # -------------------------- Undo / Redo ---------------------------
 
     def undo(self):
         if self.pm.undo():
@@ -323,6 +417,7 @@ class WorkPage(Page):
         else:
             self.lbl_status.setText("Nu există acțiuni pentru redo")
 
+    # ----------------------------- INIT UI ----------------------------
 
     def init_ui(self):
         self.pm = ProjectManager()
@@ -357,23 +452,25 @@ class WorkPage(Page):
 
         self.setLayout(main)
 
-
+        # Conexiuni semnale
         self.canvas.status_message_signal.connect(self.lbl_status.setText)
         self.canvas.mouse_moved_signal.connect(self.update_mouse_position)
         self.canvas.project_changed_signal.connect(self.refresh_statistics)
 
-
+        # Shortcuts
         QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self.undo)
         QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self.redo)
 
-
+        # Timer pentru refresh statisitici (optional)
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_statistics)
         self.refresh_timer.start(1000)
+    #MODIFICARE PT ROTIRE
+        QShortcut(QKeySequence("Escape"), self).activated.connect(self.deselect_all)
 
         self.refresh_statistics()
 
-
+    # ----------------------------- HEADER -----------------------------
 
     def create_header(self):
         w = QWidget()
@@ -415,6 +512,7 @@ class WorkPage(Page):
         w.setLayout(h)
         return w
 
+    # ----------------------------- TOOLBAR ----------------------------
 
     def create_toolbar(self):
         w = QWidget()
@@ -471,7 +569,7 @@ class WorkPage(Page):
         tools.setLayout(tl)
         v.addWidget(tools)
 
-
+        # Grid settings
         grid = QGroupBox("Setări grilă")
         gl = QVBoxLayout()
 
@@ -502,7 +600,7 @@ class WorkPage(Page):
         grid.setLayout(gl)
         v.addWidget(grid)
 
-
+        # Clear
         btn_clear = QPushButton("Șterge tot")
         btn_clear.setStyleSheet("background-color: #E74C3C;")
         btn_clear.clicked.connect(self.clear_all)
@@ -512,7 +610,7 @@ class WorkPage(Page):
         w.setLayout(v)
         return w
 
-
+    # -------------------------- RIGHT PANEL ---------------------------
 
     def create_right_panel(self):
         w = QWidget()
@@ -532,7 +630,7 @@ class WorkPage(Page):
         v = QVBoxLayout()
         v.setAlignment(Qt.AlignTop)
 
-
+        # Stats
         stats = QGroupBox("Statistici proiect")
         sv = QVBoxLayout()
 
@@ -553,7 +651,7 @@ class WorkPage(Page):
         stats.setLayout(sv)
         v.addWidget(stats)
 
-
+        # Grid / canvas info
         info = QGroupBox("Canvas / Grilă")
         iv = QVBoxLayout()
 
@@ -574,6 +672,7 @@ class WorkPage(Page):
         w.setLayout(v)
         return w
 
+    # ------------------------------ FOOTER -----------------------------
 
     def create_footer(self):
         w = QWidget()
@@ -589,7 +688,22 @@ class WorkPage(Page):
 
         w.setLayout(h)
         return w
+#MODIFICARE PT ROTIRE
+    def deselect_all(self):
+        # deselectăm obiect
+        self.pm.select_object(None)
 
+        # deselectăm toate uneltele
+        for b in [self.btn_wall, self.btn_door, self.btn_window, self.btn_furniture]:
+            b.setChecked(False)
+
+        # anulăm tool-ul curent
+        self.canvas.current_tool = None
+
+        self.lbl_status.setText("Gata | Nimic selectat")
+        self.canvas.update()
+
+    # ----------------------- TOOLBAR / GRID LOGIC ----------------------
 
     def select_tool(self, tool: str):
         for b in [self.btn_wall, self.btn_door, self.btn_window, self.btn_furniture]:
@@ -613,7 +727,7 @@ class WorkPage(Page):
     def change_grid_size(self, value: int):
         if self.pm.current_project:
             self.pm.current_project.grid_size = value
-
+        # dacă CoordinateSystem are set_grid_size, îl folosim
         if hasattr(self.pm.coordinate_system, "set_grid_size"):
             self.pm.coordinate_system.set_grid_size(value)
 
@@ -631,6 +745,7 @@ class WorkPage(Page):
             self.pm.current_project.snap_to_grid = bool(self.snap_check.isChecked())
         self.refresh_statistics()
 
+    # ---------------------------- PROJECT OPS --------------------------
 
     def clear_all(self):
         if not self.pm.current_project:
@@ -645,10 +760,10 @@ class WorkPage(Page):
         if reply != QMessageBox.Yes:
             return
 
-
+        # curățăm tot
         self.pm.current_project.clear()
         self.pm._clear_cache()
-
+        # punem stare nouă în istoric
         self.pm._push_history()
 
         self.canvas.update()
@@ -689,9 +804,10 @@ class WorkPage(Page):
         else:
             QMessageBox.warning(self, "Eroare", "Nu s-a putut încărca proiectul")
 
+    # ----------------------------- UI UPDATE ---------------------------
 
     def update_mouse_position(self, x: int, y: int):
-
+        # nu stricăm statusul dacă e ceva important acolo, doar îl completăm:
         self.lbl_status.setText(f"Mouse: ({x}, {y})")
 
     def refresh_statistics(self):
@@ -713,7 +829,7 @@ class WorkPage(Page):
             f"Dimensiune canvas: {st['canvas_width']} x {st['canvas_height']}"
         )
 
-
+        # conversie px -> cm dacă există metoda în CoordinateSystem
         if hasattr(self.pm.coordinate_system, "get_grid_spacing_cm"):
             cm = self.pm.coordinate_system.get_grid_spacing_cm()
             self.lbl_conversion.setText(f"{st['grid_size']} px = {cm:.1f} cm")
@@ -727,3 +843,4 @@ class WorkPage(Page):
             )
         elif not self.canvas.current_tool:
             self.lbl_status.setText("Gata | Selectează o unealtă sau un obiect")
+
