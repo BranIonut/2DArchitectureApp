@@ -5,31 +5,22 @@ from .ArchitecturalObjects import Wall, Door, Window, Furniture, ArchitecturalOb
 
 
 class CollisionDetector:
-    """
-    Verifică reguli STRICTE de coliziune pentru aplicația de arhitectură 2D.
-    NU modifică obiecte, doar validează.
-    """
 
-    # ============================================================
-    # UTILITARE GEOMETRICE
-    # ============================================================
 
     def collides(self, new_obj: ArchitecturalObject,
                  objects: List[ArchitecturalObject]) -> bool:
-        """
-        Returnează True dacă new_obj se lovește de ORICE obiect existent
-        """
+
 
         for obj in objects:
             if obj is new_obj:
                 continue
 
-            # WALL vs WALL (intersecție linii)
+
             if isinstance(new_obj, Wall) and isinstance(obj, Wall):
                 if self._walls_intersect(new_obj, obj):
                     return True
 
-            # ORICE ALTCEVA – bounding box
+
             else:
                 if self._bbox_intersect(new_obj, obj):
                     return True
@@ -38,7 +29,7 @@ class CollisionDetector:
 
     @staticmethod
     def _bbox(obj):
-        """Bounding box generic (x, y, w, h)."""
+
         return obj.x, obj.y, obj.width, obj.height
 
     @staticmethod
@@ -54,7 +45,7 @@ class CollisionDetector:
 
     @staticmethod
     def _lines_intersect(w1: Wall, w2: Wall) -> bool:
-        """Detectează intersecție strictă între doi pereți."""
+
 
         def ccw(A, B, C):
             return (C[1]-A[1]) * (B[0]-A[0]) > (B[1]-A[1]) * (C[0]-A[0])
@@ -74,18 +65,15 @@ class CollisionDetector:
         dy2 = w2.y2 - w2.y1
         return abs(dx1 * dy2 - dy1 * dx2) < 1e-6
 
-    # ============================================================
-    # PEREȚI
-    # ============================================================
 
     @classmethod
     def can_add_wall(cls, new_wall: Wall, walls: List[Wall]) -> bool:
         for w in walls:
-            # Intersecție strictă
+
             if cls._lines_intersect(new_wall, w):
                 return False
 
-            # Suprapunere paralelă
+
             if cls._parallel(new_wall, w):
                 if cls._rects_overlap(
                     cls.wall_bbox(new_wall),
@@ -101,9 +89,7 @@ class CollisionDetector:
         y = min(w.y1, w.y2)
         return x, y, abs(w.x2 - w.x1), abs(w.y2 - w.y1)
 
-    # ============================================================
-    # UȘI / FERESTRE
-    # ============================================================
+
 
     @classmethod
     def can_add_opening(cls, obj, walls: List[Wall], others: List[ArchitecturalObject]) -> bool:
@@ -124,9 +110,6 @@ class CollisionDetector:
 
         return True
 
-    # ============================================================
-    # MOBILIER
-    # ============================================================
 
     @classmethod
     def can_add_furniture(cls, furn: Furniture,
@@ -143,9 +126,7 @@ class CollisionDetector:
 
         return True
 
-    # ============================================================
-    # MUTARE / ROTIRE
-    # ============================================================
+
 
     @classmethod
     def can_move_object(cls, obj: ArchitecturalObject,
