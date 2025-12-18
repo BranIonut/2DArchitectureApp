@@ -5,7 +5,7 @@ from .ArchitecturalObjects import Wall, Door, Window, Furniture, ArchitecturalOb
 
 
 class CollisionDetector:
-
+##asdas
 
     def collides(self, new_obj: ArchitecturalObject,
                  objects: List[ArchitecturalObject]) -> bool:
