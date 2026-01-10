@@ -1,9 +1,13 @@
 from typing import Optional, List, Dict
+import copy
+
 from .Project import Project
 from .ArchitecturalObjects import (
     ArchitecturalObject, Wall, Door, Window, Furniture, Transform
 )
 from .CoordinateSystem import CoordinateSystem
+
+from .CollisionDetector import CollisionDetector
 
 
 class ProjectManager:
@@ -16,306 +20,292 @@ class ProjectManager:
         return cls._instance
 
     def __init__(self):
-        if self._initialized:
+        if getattr(self, "_initialized", False):
             return
 
         self._initialized = True
         self.current_project: Optional[Project] = None
 
+
         self.view_scale: float = 1.0
         self.coordinate_system = CoordinateSystem(grid_size=10, scale=1.0)
 
-        # cache-uri pentru obiecte
+
         self._walls: List[Wall] = []
         self._doors: List[Door] = []
         self._windows: List[Window] = []
         self._furniture: List[Furniture] = []
 
-        # obiectul selectat curent
         self.selected_object: Optional[ArchitecturalObject] = None
 
-        # starea undo/redo (simplificat)
+
         self._history: List[Dict] = []
         self._history_index = -1
 
-    def set_view_scale(self, new_scale: float):
+        self.collision_detector = CollisionDetector()
 
-        self.view_scale = max(0.1, min(new_scale, 5.0))
+
+    def _get_snapshot(self) -> Dict:
+
+        return {
+            "project": copy.deepcopy(self.current_project),
+            "walls": copy.deepcopy(self._walls),
+            "doors": copy.deepcopy(self._doors),
+            "windows": copy.deepcopy(self._windows),
+            "furniture": copy.deepcopy(self._furniture),
+            "selected": self.selected_object.id if self.selected_object else None
+        }
+
+    def _push_history(self):
+
+        if not self.current_project:
+            return
+
+
+        if self._history_index < len(self._history) - 1:
+            self._history = self._history[:self._history_index + 1]
+
+        self._history.append(self._get_snapshot())
+        self._history_index += 1
+
+    def _restore(self, snapshot: Dict):
+
+        self.current_project = snapshot["project"]
+        self._walls = snapshot["walls"]
+        self._doors = snapshot["doors"]
+        self._windows = snapshot["windows"]
+        self._furniture = snapshot["furniture"]
+
+        sel = snapshot["selected"]
+
+        self.selected_object = None
+        for obj in self.get_all_objects():
+            obj.selected = False
+            if sel and obj.id == sel:
+                obj.selected = True
+                self.selected_object = obj
+
+    def undo(self) -> bool:
+        if self._history_index <= 0:
+            return False
+
+        self._history_index -= 1
+        snap = self._history[self._history_index]
+        self._restore(snap)
+        return True
+
+    def redo(self) -> bool:
+        if self._history_index >= len(self._history) - 1:
+            return False
+
+        self._history_index += 1
+        snap = self._history[self._history_index]
+        self._restore(snap)
+        return True
+
+
+
+    def set_view_scale(self, value: float):
+        self.view_scale = max(0.1, min(10.0, value))
 
     def get_view_scale(self) -> float:
         return self.view_scale
 
-    def world_to_screen(self, value: float) -> float:
 
-        return value * self.view_scale
 
-    def screen_to_world(self, value: float) -> float:
-
-        return value / self.view_scale
-
-    def get_scaled_grid_size(self) -> int:
-
-        base_size = self.current_project.grid_size if self.current_project else 10
-        return int(base_size * self.view_scale)
-
-    def create_new_project(self, name: str = "Proiect Nou",
-                           width: int = 1000, height: int = 800) -> Project:
+    def create_new_project(self, name="Proiect Nou", width=1000, height=800):
         self.current_project = Project(name, width, height)
-        self._clear_caches()
+
+
+        self._clear_cache()
+
+
+        self._history = []
+        self._history_index = -1
+
+
+        self.view_scale = 1.0
+        self.coordinate_system = CoordinateSystem(grid_size=10, scale=1.0)
+
+
+        self._push_history()
+
         return self.current_project
 
-    def load_project(self, filepath: str) -> bool:
-        project = Project.load(filepath)
-        if project:
-            self.current_project = project
-            self._rebuild_caches()
-            return True
-        return False
-
-    def save_project(self, filepath: str = None) -> bool:
-        #salvare proeict curent
+    def save_project(self, filepath=None):
         if not self.current_project:
             return False
 
-        #sincron cache-urile cu proiectul
         self._sync_to_project()
         return self.current_project.save(filepath)
 
-    def _clear_caches(self):
-        #stergere totala a cache ului
-        self._walls.clear()
-        self._doors.clear()
-        self._windows.clear()
-        self._furniture.clear()
+    def load_project(self, filepath):
+        project = Project.load(filepath)
+        if not project:
+            return False
+
+        self.current_project = project
+        self._rebuild_cache()
+        self._push_history()
+        return True
+
+
+
+    def _clear_cache(self):
+        self._walls = []
+        self._doors = []
+        self._windows = []
+        self._furniture = []
         self.selected_object = None
 
-    def _rebuild_caches(self):
-        #reconstruire cache
-        if not self.current_project:
-            return
+    def _rebuild_cache(self):
+        self._clear_cache()
 
-        self._clear_caches()
-
-        #reconstruire pereti
-        for wall_data in self.current_project.walls:
-            wall = Wall.from_dict(wall_data)
-            self._walls.append(wall)
-
-        # rec usi
-        for door_data in self.current_project.doors:
-            door = Door.from_dict(door_data)
-            self._doors.append(door)
-
-        # rec fereste
-        for window_data in self.current_project.windows:
-            window = Window.from_dict(window_data)
-            self._windows.append(window)
-
-        # rec mobilier
-        for furniture_data in self.current_project.furniture:
-            furniture = Furniture.from_dict(furniture_data)
-            self._furniture.append(furniture)
+        for w in self.current_project.walls:
+            self._walls.append(Wall.from_dict(w))
+        for d in self.current_project.doors:
+            self._doors.append(Door.from_dict(d))
+        for w in self.current_project.windows:
+            self._windows.append(Window.from_dict(w))
+        for f in self.current_project.furniture:
+            self._furniture.append(Furniture.from_dict(f))
 
     def _sync_to_project(self):
-        if not self.current_project:
-            return
-
         self.current_project.walls = [w.to_dict() for w in self._walls]
         self.current_project.doors = [d.to_dict() for d in self._doors]
         self.current_project.windows = [w.to_dict() for w in self._windows]
         self.current_project.furniture = [f.to_dict() for f in self._furniture]
 
-    #operatii pereti
-    def add_wall(self, x1: float, y1: float, x2: float, y2: float,
-                 thickness: float = 20) -> Wall:
-        #adauga perete nou
-        if self.current_project and self.current_project.snap_to_grid:
-            x1, y1 = self.coordinate_system.snap_to_grid(x1, y1)
-            x2, y2 = self.coordinate_system.snap_to_grid(x2, y2)
 
-        wall = Wall(x1, y1, x2, y2, thickness)
+
+    def add_wall(self, x1, y1, x2, y2, t=20):
+        wall = Wall(x1, y1, x2, y2, t)
+
+
+        if not self.collision_detector.can_add_wall(wall, self._walls):
+            return None
         self._walls.append(wall)
-
-        if self.current_project:
-            self.current_project.add_wall(wall.to_dict())
+        self._sync_to_project()
+        self._push_history()
 
         return wall
 
-    def get_walls(self) -> List[Wall]:
-        #lista pereti
-        return self._walls.copy()
+    def add_door(self, x, y, w, h):
+        d = Door(x, y, w, h)
 
-    #operatii usi
-    def add_door(self, x: float, y: float, width: float = 80,
-                 height: float = 20) -> Door:
-        #usa noua
-        if self.current_project and self.current_project.snap_to_grid:
-            x, y = self.coordinate_system.snap_to_grid(x, y)
+        walls = self._walls
+        others = self._doors + self._windows
 
-        door = Door(x, y, width, height)
-        self._doors.append(door)
+        if not self.collision_detector.can_add_opening(d, walls, others):
+            return None
 
-        if self.current_project:
-            self.current_project.add_door(door.to_dict())
+        self._doors.append(d)
+        self._sync_to_project()
+        self._push_history()
 
-        return door
+        return d
 
-    def get_doors(self) -> List[Door]:
-        return self._doors.copy()
+    def add_window(self, x, y, w, h):
+        win = Window(x, y, w, h)
 
-    #operatii ferestre
-    def add_window(self, x: float, y: float, width: float = 100,
-                   height: float = 20) -> Window:
-        if self.current_project and self.current_project.snap_to_grid:
-            x, y = self.coordinate_system.snap_to_grid(x, y)
+        walls = self._walls
+        others = self._doors + self._windows
 
-        window = Window(x, y, width, height)
-        self._windows.append(window)
+        if not self.collision_detector.can_add_opening(win, walls, others):
+            return None
 
-        if self.current_project:
-            self.current_project.add_window(window.to_dict())
+        self._windows.append(win)
+        self._sync_to_project()
+        self._push_history()
 
-        return window
+        return win
 
-    def get_windows(self) -> List[Window]:
-        return self._windows.copy()
+    def add_furniture(self, x, y, w, h, t="generic"):
+        f = Furniture(x, y, w, h, t)
+
+        walls = self._walls
+        openings = self._doors + self._windows
+
+        if not self.collision_detector.can_add_furniture(f, walls, openings):
+            return None
+
+        self._furniture.append(f)
+        self._sync_to_project()
+        self._push_history()
+
+        return f
+
+    def remove_object(self, obj):
+
+        if isinstance(obj, Wall):
+            self._walls.remove(obj)
+        elif isinstance(obj, Door):
+            self._doors.remove(obj)
+        elif isinstance(obj, Window):
+            self._windows.remove(obj)
+        elif isinstance(obj, Furniture):
+            self._furniture.remove(obj)
+
+        self.selected_object = None
+
+        self._sync_to_project()
+        self._push_history()
 
 
-        #ooeratii mobilier
-    def add_furniture(self, x: float, y: float, width: float, height: float,
-                      furniture_type: str = "generic") -> Furniture:
-        if self.current_project and self.current_project.snap_to_grid:
-            x, y = self.coordinate_system.snap_to_grid(x, y)
+    def get_all_objects(self):
+        return self._walls + self._doors + self._windows + self._furniture
 
-        furniture = Furniture(x, y, width, height, furniture_type)
-        self._furniture.append(furniture)
-
-        if self.current_project:
-            self.current_project.add_furniture(furniture.to_dict())
-
-        return furniture
-
-    def get_furniture(self) -> List[Furniture]:
-        return self._furniture.copy()
-
-
-    def get_all_objects(self) -> List[ArchitecturalObject]:
-        #returneaza toate obiectele din proiect
-        all_objects = []
-        all_objects.extend(self._walls)
-        all_objects.extend(self._doors)
-        all_objects.extend(self._windows)
-        all_objects.extend(self._furniture)
-        return all_objects
-
-    def remove_object(self, obj: ArchitecturalObject) -> bool:
-        #sterge un obiect din proiect
-        try:
-            if isinstance(obj, Wall):
-                self._walls.remove(obj)
-                if self.current_project:
-                    self.current_project.remove_object('wall', obj.id)
-            elif isinstance(obj, Door):
-                self._doors.remove(obj)
-                if self.current_project:
-                    self.current_project.remove_object('door', obj.id)
-            elif isinstance(obj, Window):
-                self._windows.remove(obj)
-                if self.current_project:
-                    self.current_project.remove_object('window', obj.id)
-            elif isinstance(obj, Furniture):
-                self._furniture.remove(obj)
-                if self.current_project:
-                    self.current_project.remove_object('furniture', obj.id)
-
-            if self.selected_object == obj:
-                self.selected_object = None
-
-            return True
-        except ValueError:
-            return False
-
-    def find_object_at_position(self, x: float, y: float) -> Optional[ArchitecturalObject]:
-        # cauta ultimul obiect pus (sunt deasupra)
-        all_objects = self.get_all_objects()
-
-        for obj in reversed(all_objects):
-            if obj.contains_point(x, y):
-                return obj
-
-        return None
-
-    def select_object(self, obj: Optional[ArchitecturalObject]):
-        # deselectare obiectul anterior
+    def select_object(self, obj):
         if self.selected_object:
             self.selected_object.selected = False
-
-        # select noul obiect
         self.selected_object = obj
         if obj:
             obj.selected = True
 
-    def get_selected_object(self) -> Optional[ArchitecturalObject]:
-        return self.selected_object
+    def find_object_at(self, x, y):
+        for obj in reversed(self.get_all_objects()):
+            if obj.contains_point(x, y):
+                return obj
+        return None
+
+    def translate_selected(self, dx, dy):
+        if not self.selected_object:
+            return
+
+        old_state = copy.deepcopy(self.selected_object)
+
+        Transform.translate(self.selected_object, dx, dy)
+
+        if not self.collision_detector.can_move_object(
+                self.selected_object,
+                self.get_all_objects()
+        ):
+            # rollback
+            self.selected_object.__dict__.update(old_state.__dict__)
+            return
+
+        self._sync_to_project()
 
 
-    def rotate_selected(self, angle: float):
-        if self.selected_object:
-            Transform.rotate(self.selected_object, angle)
-            self._sync_to_project()
 
-    def scale_selected(self, scale_x: float, scale_y: float):
-        if self.selected_object:
-            Transform.scale(self.selected_object, scale_x, scale_y)
-            self._sync_to_project()
-
-    def translate_selected(self, dx: float, dy: float):
-        if self.selected_object:
-            Transform.translate(self.selected_object, dx, dy)
-            self._sync_to_project()
-
-    def resize_selected(self, new_width: float, new_height: float, anchor: str = "center"):
-        if self.selected_object:
-            Transform.resize(self.selected_object, new_width, new_height, anchor)
-            self._sync_to_project()
-
-    def set_grid_size(self, size: int):
-        self.coordinate_system.set_grid_size(size)
-        if self.current_project:
-            self.current_project.grid_size = size
-
-    def toggle_grid_visibility(self):
-        if self.current_project:
-            self.current_project.grid_visible = not self.current_project.grid_visible
-
-    def toggle_snap_to_grid(self):
-        if self.current_project:
-            self.current_project.snap_to_grid = not self.current_project.snap_to_grid
-
-    def get_grid_visible(self) -> bool:
-        return self.current_project.grid_visible if self.current_project else True
-
-    def get_snap_to_grid(self) -> bool:
-        return self.current_project.snap_to_grid if self.current_project else True
-
-    def get_statistics(self) -> Dict:
+    def get_statistics(self):
         if not self.current_project:
             return {}
 
-        total_wall_length = sum(wall.get_length() for wall in self._walls)
-        total_wall_length_cm = self.coordinate_system.pixels_to_real_units(total_wall_length)
+        total_len = sum(w.get_length() for w in self._walls)
+        real_len = self.coordinate_system.pixels_to_real_units(total_len)
 
         return {
-            'project_name': self.current_project.name,
-            'total_objects': len(self.get_all_objects()),
-            'walls_count': len(self._walls),
-            'doors_count': len(self._doors),
-            'windows_count': len(self._windows),
-            'furniture_count': len(self._furniture),
-            'total_wall_length': self.coordinate_system.format_distance(total_wall_length_cm),
-            'canvas_width': self.current_project.width,
-            'canvas_height': self.current_project.height,
-            'grid_size': self.current_project.grid_size,
-            'snap_to_grid': self.current_project.snap_to_grid,
-            'grid_visible': self.current_project.grid_visible
+            "project_name": self.current_project.name,
+            "total_objects": len(self.get_all_objects()),
+            "walls_count": len(self._walls),
+            "doors_count": len(self._doors),
+            "windows_count": len(self._windows),
+            "furniture_count": len(self._furniture),
+            "total_wall_length": self.coordinate_system.format_distance(real_len),
+            "canvas_width": self.current_project.width,
+            "canvas_height": self.current_project.height,
+            "grid_size": self.current_project.grid_size,
+            "snap_to_grid": self.current_project.snap_to_grid,
+            "grid_visible": self.current_project.grid_visible
         }
