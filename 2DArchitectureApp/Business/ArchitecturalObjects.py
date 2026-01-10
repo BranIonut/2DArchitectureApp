@@ -2,6 +2,48 @@ import os
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtCore import QRectF, Qt, QByteArray, QPointF
 from PyQt5.QtGui import QPixmap, QPainter, QColor
+import math
+
+class RoomFloor:
+    def __init__(self, x, y, width, height):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.type = "room_floor"
+        self.is_selected = False
+        self.is_colliding = False
+        self.is_structure = False
+        self.is_wall_attachment = False
+        self.rotation = 0
+        self.color = QColor(245, 245, 220, 120)
+
+    @property
+    def rect(self):
+        x = min(self.x, self.x + self.width)
+        y = min(self.y, self.y + self.height)
+        w = abs(self.width)
+        h = abs(self.height)
+        return QRectF(x, y, w, h)
+
+    @property
+    def area_m2(self):
+        SCALE_FACTOR = 0.025
+        real_w = abs(self.width) * SCALE_FACTOR
+        real_h = abs(self.height) * SCALE_FACTOR
+        return round(real_w * real_h, 2)
+
+    def to_dict(self):
+        return {
+            "type": "room_floor",
+            "x": self.x, "y": self.y,
+            "width": self.width, "height": self.height
+        }
+
+    @staticmethod
+    def from_dict(data):
+        return RoomFloor(data["x"], data["y"], data["width"], data["height"])
+
 class Wall:
     def __init__(self, x1, y1, x2, y2, thickness=10):
         self.x1 = x1
@@ -49,14 +91,23 @@ class Window:
 
     @property
     def rect(self):
-        if abs(self.rotation) % 180 == 90:
-            cx = self.x + self.width / 2
-            cy = self.y + self.height / 2
+        base_rect = QRectF(self.x, self.y, self.width, self.height)
+
+        if self.rotation % 180 == 0:
+            return base_rect
+
+        if self.rotation % 180 == 90:
+            center = base_rect.center()
             new_w = self.height
             new_h = self.width
-            return QRectF(cx - new_w / 2, cy - new_h / 2, new_w, new_h)
+            return QRectF(center.x() - new_w / 2, center.y() - new_h / 2, new_w, new_h)
 
-        return QRectF(self.x, self.y, self.width, self.height)
+        center = base_rect.center()
+        rad = math.radians(self.rotation)
+        new_w = abs(self.width * math.cos(rad)) + abs(self.height * math.sin(rad))
+        new_h = abs(self.width * math.sin(rad)) + abs(self.height * math.cos(rad))
+
+        return QRectF(center.x() - new_w / 2, center.y() - new_h / 2, new_w, new_h)
 
     def to_dict(self):
         return {
@@ -73,7 +124,7 @@ class Window:
 class SvgFurnitureObject:
     def __init__(self, file_path, category="General", x=0, y=0, rotation=0, width=80, height=80):
         self.file_path = file_path
-
+        self.rotation = rotation
         path_str = str(file_path).lower().replace('\\', '/')
         filename = os.path.basename(file_path)
         self.name = os.path.splitext(filename)[0].replace('AdobeStock_', '').replace('_', ' ').title()
@@ -127,23 +178,27 @@ class SvgFurnitureObject:
 
     @property
     def rect(self):
-        if abs(self.rotation) % 180 == 90:
-            cx = self.x + self.width / 2
-            cy = self.y + self.height / 2
+        base_rect = QRectF(self.x, self.y, self.width, self.height)
+
+        if self.rotation % 180 == 0:
+            return base_rect
+
+        if self.rotation % 180 == 90:
+            center = base_rect.center()
             new_w = self.height
             new_h = self.width
-            new_x = cx - new_w / 2
-            new_y = cy - new_h / 2
-            return QRectF(new_x, new_y, new_w, new_h)
+            return QRectF(center.x() - new_w / 2, center.y() - new_h / 2, new_w, new_h)
 
-        return QRectF(self.x, self.y, self.width, self.height)
+        center = base_rect.center()
+        rad = math.radians(self.rotation)
+        new_w = abs(self.width * math.cos(rad)) + abs(self.height * math.sin(rad))
+        new_h = abs(self.width * math.sin(rad)) + abs(self.height * math.cos(rad))
+
+        return QRectF(center.x() - new_w / 2, center.y() - new_h / 2, new_w, new_h)
 
     def move_to(self, pos):
         self.x = pos.x() - self.width / 2
         self.y = pos.y() - self.height / 2
-
-    def contains(self, point):
-        return self.rect.contains(point)
 
     def draw(self, painter):
         if not self.is_valid:

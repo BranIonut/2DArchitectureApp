@@ -34,8 +34,9 @@ class ProjectManager:
                         restored_objects.append(Wall.from_dict(item))
                     elif obj_type == "window":
                         restored_objects.append(Window.from_dict(item))
+                    elif obj_type == "room_floor":
+                        restored_objects.append(RoomFloor.from_dict(item))
                     else:
-                        # aici intra SVG-uri
                         restored_objects.append(SvgFurnitureObject.from_dict(item))
                 except Exception as e:
                     print(f"Eroare la restaurarea obiectului: {e}")
