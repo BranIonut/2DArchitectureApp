@@ -1,12 +1,9 @@
 from PyQt5.QtWidgets import (QVBoxLayout, QPushButton, QLabel)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
-
 from .Page import Page
 
-
 class MainPage(Page):
-
     def init_ui(self):
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignCenter)
@@ -35,9 +32,7 @@ class MainPage(Page):
                 border-radius: 5px;
                 font-size: 14px;
             }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
+            QPushButton:hover { background-color: #45a049; }
         """)
         btn_work.clicked.connect(lambda: self.dashboard.update_page('work'))
         layout.addWidget(btn_work)
@@ -54,9 +49,7 @@ class MainPage(Page):
                 font-size: 14px;
                 margin-top: 10px;
             }
-            QPushButton:hover {
-                background-color: #0b7dda;
-            }
+            QPushButton:hover { background-color: #0b7dda; }
         """)
         btn_help.clicked.connect(lambda: self.dashboard.update_page('help'))
         layout.addWidget(btn_help)

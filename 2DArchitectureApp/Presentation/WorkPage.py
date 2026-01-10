@@ -4,427 +4,326 @@ import sys
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
-    QMessageBox, QFileDialog, QSpinBox, QCheckBox, QShortcut
+    QMessageBox, QFileDialog, QSpinBox, QCheckBox, QShortcut, QToolBox,
+    QListWidget, QListWidgetItem, QSplitter, QAbstractItemView
 )
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from Business.ArchitecturalObjects import Transform
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence, QIcon, QPixmap, QFont
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QPointF, QSize, QRectF
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(current_dir)
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
 
 from .Page import Page
-from Business.ProjectManager import ProjectManager
 
+try:
+    from Business.ProjectManager import ProjectManager
+    from Business.ArchitecturalObjects import SvgFurnitureObject, Wall, Window
+except ImportError:
+    from ProjectManager import ProjectManager
+    from ArchitecturalObjects import SvgFurnitureObject, Wall, Window
 
-# =====================================================================
-# CANVAS
-# =====================================================================
-#MODIFICARE ROTIRE
 class SimpleCanvas(QWidget):
     mouse_moved_signal = pyqtSignal(int, int)
     project_changed_signal = pyqtSignal()
     status_message_signal = pyqtSignal(str)
+    object_selected_signal = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        self.is_rotating = False
-        self.rotate_start_angle = 0.0
-        self.initial_rotation = 0.0
         self.pm = ProjectManager()
-
+        self.objects = []
         self.offset_x = 0
         self.offset_y = 0
+        self.zoom_scale = 1.0
+        self.current_tool_mode = None
+        self.current_svg_path = None
+        self.selected_object = None
         self.is_panning = False
         self.last_pan_x = 0
         self.last_pan_y = 0
-
-        self.mouse_x = 0
-        self.mouse_y = 0
-
-        self.is_drawing = False
-        self.start_x = 0
-        self.start_y = 0
-        self.current_tool = None
-
+        self.is_drawing_wall = False
+        self.wall_start_pt = None
+        self.wall_temp_end = None
         self.is_moving = False
-        self.drag_start_x = 0
-        self.drag_start_y = 0
+        self.is_rotating = False
+        self.drag_start_pos = QPointF()
+        self.obj_start_pos = QPointF()
+        self.wall_coords_start = None
+        self.rotate_start_angle = 0
+        self.initial_rotation = 0
+        self.grid_visible = True
+        self.snap_to_grid = True
+        self.grid_size = 20
 
         self.setMinimumSize(600, 400)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setStyleSheet("background-color: white;")
 
-    # =============================== DRAW ===============================
     def paintEvent(self, e):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), Qt.white)
-
-        scale = self.pm.get_view_scale()
         painter.translate(self.offset_x, self.offset_y)
+        painter.scale(self.zoom_scale, self.zoom_scale)
 
-        if self.pm.current_project and self.pm.current_project.grid_visible:
-            self.draw_grid(painter, scale)
+        if self.grid_visible:
+            self.draw_grid(painter)
 
-        self.draw_objects(painter, scale)
+        for obj in self.objects:
+            if isinstance(obj, Wall):
+                self.draw_wall(painter, obj)
 
-        if self.is_drawing and self.current_tool:
-            self.draw_preview(painter, scale)
+        for obj in self.objects:
+            if isinstance(obj, Window):
+                self.draw_window(painter, obj)
+            elif isinstance(obj, SvgFurnitureObject):
+                obj.draw(painter)
 
-    def draw_grid(self, painter, scale: float):
-        if not self.pm.current_project:
-            return
-
-        grid_size = self.pm.current_project.grid_size
-        step = int(grid_size * scale)
-        if step <= 2:
-            return
-
-        width = self.width()
-        height = self.height()
-
-        start_x = -self.offset_x
-        start_y = -self.offset_y
-        end_x = start_x + width
-        end_y = start_y + height
-
-        first_x = start_x - (start_x % step)
-        first_y = start_y - (start_y % step)
-
-        pen_main = QPen(QColor(220, 220, 220))
-        pen_bold = QPen(QColor(180, 180, 180))
-        pen_main.setWidth(1)
-        pen_bold.setWidth(1)
-
-        x = first_x
-        while x < end_x + step:
-            idx = int(x // step)
-            painter.setPen(pen_bold if idx % 10 == 0 else pen_main)
-            painter.drawLine(int(x), int(start_y), int(x), int(end_y))
-            x += step
-
-        y = first_y
-        while y < end_y + step:
-            idx = int(y // step)
-            painter.setPen(pen_bold if idx % 10 == 0 else pen_main)
-            painter.drawLine(int(start_x), int(y), int(end_x), int(y))
-            y += step
-    #MODIFICARE PT ROTIRE
-    def draw_objects(self, painter, scale: float):
-        to_scr = lambda v: int(v * scale)
-
-        # WALLS
-        for w in self.pm._walls:
-            color = QColor("#FF5722") if w.selected else QColor(w.color)
-            pen = QPen(color)
-            pen.setWidth(max(2, int(w.thickness * scale)))
+        if self.is_drawing_wall and self.wall_start_pt and self.wall_temp_end:
+            pen = QPen(QColor(80, 80, 80), 8)
+            pen.setStyle(Qt.DashLine)
             painter.setPen(pen)
-            painter.drawLine(to_scr(w.x1), to_scr(w.y1), to_scr(w.x2), to_scr(w.y2))
+            painter.drawLine(self.wall_start_pt, self.wall_temp_end)
 
-        # DOORS
-        for d in self.pm._doors:
+    def draw_grid(self, painter):
+        pen = QPen(QColor(240, 240, 240))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        start, end, step = -3000, 6000, self.grid_size
+        for x in range(start, end, step): painter.drawLine(x, start, x, end)
+        for y in range(start, end, step): painter.drawLine(start, y, end, y)
 
-            painter.save()
-            cx = (d.x + d.width / 2) * scale
-            cy = (d.y + d.height / 2) * scale
+    def draw_wall(self, painter, wall):
+        color = QColor(64, 64, 64)
+        if wall.is_selected: color = Qt.red
+        pen = QPen(color, wall.thickness)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(int(wall.x1), int(wall.y1), int(wall.x2), int(wall.y2))
 
-            painter.translate(cx, cy)
-            painter.rotate(d.rotation)
-            painter.translate(-cx, -cy)
+    def draw_window(self, painter, win):
+        painter.save()
+        center = QPointF(win.x + win.width / 2, win.y + win.height / 2)
+        painter.translate(center)
+        painter.rotate(win.rotation)
+        painter.translate(-center)
+        rect = QRectF(win.x, win.y, win.width, win.height)
+        painter.setBrush(QBrush(QColor(173, 216, 230, 200)))
+        painter.setPen(QPen(Qt.red if win.is_selected else Qt.blue, 2))
+        painter.drawRect(rect)
+        painter.drawLine(QPointF(win.x, win.y + win.height / 2),
+                         QPointF(win.x + win.width, win.y + win.height / 2))
+        painter.restore()
 
-            sx, sy = to_scr(d.x), to_scr(d.y)
-            sw, sh = to_scr(d.width), to_scr(d.height)
-            color = QColor("#FF5722") if d.selected else QColor(d.color)
-            painter.setPen(QPen(color, 2))
-            painter.setBrush(QBrush(color))
-            painter.drawRect(sx, sy, sw, sh)
-
-            painter.restore()
-
-        # WINDOWS
-        for w in self.pm._windows:
-            painter.save()
-
-            cx = (w.x + w.width / 2) * scale
-            cy = (w.y + w.height / 2) * scale
-
-            painter.translate(cx, cy)
-            painter.rotate(w.rotation)
-            painter.translate(-cx, -cy)
-
-            sx, sy = to_scr(w.x), to_scr(w.y)
-            sw, sh = to_scr(w.width), to_scr(w.height)
-            color = QColor("#FF5722") if w.selected else QColor(w.color)
-            painter.setPen(QPen(color, 2))
-            painter.setBrush(QBrush(QColor(173, 216, 230, 150)))
-            painter.drawRect(sx, sy, sw, sh)
-
-            painter.restore()
-
-        # FURNITURE
-        for f in self.pm._furniture:
-            painter.save()
-
-            cx = (f.x + f.width / 2) * scale
-            cy = (f.y + f.height / 2) * scale
-
-            painter.translate(cx, cy)
-            painter.rotate(f.rotation)
-            painter.translate(-cx, -cy)
-
-            sx, sy = to_scr(f.x), to_scr(f.y)
-            sw, sh = to_scr(f.width), to_scr(f.height)
-            color = QColor("#FF5722") if f.selected else QColor(f.color)
-            painter.setPen(QPen(color, 2))
-            painter.setBrush(QBrush(color))
-            painter.drawRect(sx, sy, sw, sh)
-
-            painter.restore()
-
-    def draw_preview(self, painter, scale: float):
-        painter.setPen(QPen(QColor(100, 100, 100), 2, Qt.DashLine))
-
-        sx = int(self.start_x * scale)
-        sy = int(self.start_y * scale)
-        mx = int((self.mouse_x - self.offset_x))
-        my = int((self.mouse_y - self.offset_y))
-
-        if self.current_tool == "wall":
-            painter.drawLine(sx, sy, mx, my)
-        else:
-            painter.drawRect(
-                min(sx, mx),
-                min(sy, my),
-                abs(mx - sx),
-                abs(my - sy)
-            )
-
-    # =============================== MOUSE ==============================
-    #MODIFICARE ROTIRE
     def mousePressEvent(self, e):
-        scale = self.pm.get_view_scale()
-
         if e.button() == Qt.MiddleButton:
             self.is_panning = True
-            self.last_pan_x = e.x()
-            self.last_pan_y = e.y()
+            self.last_pan_x, self.last_pan_y = e.x(), e.y()
             self.setCursor(Qt.ClosedHandCursor)
             return
+        wx = (e.x() - self.offset_x) / self.zoom_scale
+        wy = (e.y() - self.offset_y) / self.zoom_scale
+        if self.snap_to_grid:
+            wx = round(wx / self.grid_size) * self.grid_size
+            wy = round(wy / self.grid_size) * self.grid_size
+        pos_pt = QPointF(wx, wy)
 
-        if e.button() == Qt.RightButton and self.pm.selected_object:
-            scale = self.pm.get_view_scale()
-            wx = (e.x() - self.offset_x) / scale
-            wy = (e.y() - self.offset_y) / scale
+        if e.button() == Qt.RightButton and self.selected_object:
+            if not isinstance(self.selected_object, Wall):
+                self.is_rotating = True
+                rect = self.selected_object.rect
+                self.rotate_start_angle = self._angle_to_mouse(rect.center().x(), rect.center().y(), wx, wy)
+                self.initial_rotation = self.selected_object.rotation
+                return
 
-            obj = self.pm.selected_object
-            cx, cy = obj.get_center()
+        if e.button() == Qt.LeftButton:
+            if self.current_tool_mode == "wall":
+                self.is_drawing_wall = True
+                self.wall_start_pt = pos_pt
+                self.wall_temp_end = pos_pt
+                return
+            if self.current_tool_mode in ["window", "svg_placement"]:
+                self.place_object_at(wx, wy)
+                return
 
-            self.is_rotating = True
-            self.rotate_start_angle = self._angle_to_mouse(cx, cy, wx, wy)
-            self.initial_rotation = obj.rotation
-            return
+            clicked_obj = None
+            for obj in reversed(self.objects):
+                if isinstance(obj, Wall):
+                    if self.dist_to_segment(pos_pt, obj) < obj.thickness / 2 + 5:
+                        clicked_obj = obj
+                        break
+                elif isinstance(obj, (Window, SvgFurnitureObject)):
+                    # === FIX AICI: Folosim rect.contains în loc de obj.contains ===
+                    if obj.rect.contains(pos_pt):
+                        clicked_obj = obj
+                        break
 
-        if e.button() != Qt.LeftButton:
-            return
-
-        wx = (e.x() - self.offset_x) / scale
-        wy = (e.y() - self.offset_y) / scale
-
-
-        # DRAW MODE
-        if self.current_tool:
-            if self.pm.current_project and self.pm.current_project.snap_to_grid:
-                wx, wy = self.pm.coordinate_system.snap_to_grid(wx, wy)
-            self.is_drawing = True
-            self.start_x, self.start_y = wx, wy
+            self.select_object(clicked_obj)
+            if clicked_obj:
+                self.is_moving = True
+                self.drag_start_pos = pos_pt
+                if isinstance(clicked_obj, Wall):
+                    self.wall_coords_start = (clicked_obj.x1, clicked_obj.y1, clicked_obj.x2, clicked_obj.y2)
+                else:
+                    self.obj_start_pos = QPointF(clicked_obj.x, clicked_obj.y)
             self.update()
-            return
 
-        # SELECT MODE
-        obj = self.pm.find_object_at(wx, wy)
-        self.pm.select_object(obj)
-
-        if obj:
-            self.is_moving = True
-            self.drag_start_x = wx
-            self.drag_start_y = wy
-
-        self.project_changed_signal.emit()
-        self.update()
-    #MODIFICARE ROTIRE
     def mouseMoveEvent(self, e):
-        self.mouse_x = e.x()
-        self.mouse_y = e.y()
-
-        scale = self.pm.get_view_scale()
-        wx = (e.x() - self.offset_x) / scale
-        wy = (e.y() - self.offset_y) / scale
-
+        wx = (e.x() - self.offset_x) / self.zoom_scale
+        wy = (e.y() - self.offset_y) / self.zoom_scale
         self.mouse_moved_signal.emit(int(wx), int(wy))
-
         if self.is_panning:
-            dx = e.x() - self.last_pan_x
-            dy = e.y() - self.last_pan_y
-            self.offset_x += dx
-            self.offset_y += dy
-            self.last_pan_x = e.x()
-            self.last_pan_y = e.y()
+            self.offset_x += e.x() - self.last_pan_x
+            self.offset_y += e.y() - self.last_pan_y
+            self.last_pan_x, self.last_pan_y = e.x(), e.y()
             self.update()
             return
-
-        if self.is_rotating and self.pm.selected_object:
-            scale = self.pm.get_view_scale()
-            wx = (e.x() - self.offset_x) / scale
-            wy = (e.y() - self.offset_y) / scale
-
-            obj = self.pm.selected_object
-            cx, cy = obj.get_center()
-
-            current_angle = self._angle_to_mouse(cx, cy, wx, wy)
-            delta = current_angle - self.rotate_start_angle
-
-            Transform.rotate(obj, delta)
-            obj.rotation = (self.initial_rotation + delta) % 360
-
+        if self.snap_to_grid:
+            wx = round(wx / self.grid_size) * self.grid_size
+            wy = round(wy / self.grid_size) * self.grid_size
+        if self.is_drawing_wall:
+            self.wall_temp_end = QPointF(wx, wy)
             self.update()
             return
-
-        if self.is_drawing:
+        if self.is_moving and self.selected_object:
+            dx = wx - self.drag_start_pos.x()
+            dy = wy - self.drag_start_pos.y()
+            if isinstance(self.selected_object, Wall):
+                ox1, oy1, ox2, oy2 = self.wall_coords_start
+                self.selected_object.x1 = ox1 + dx
+                self.selected_object.y1 = oy1 + dy
+                self.selected_object.x2 = ox2 + dx
+                self.selected_object.y2 = oy2 + dy
+            else:
+                self.selected_object.x = self.obj_start_pos.x() + dx
+                self.selected_object.y = self.obj_start_pos.y() + dy
+            self.object_selected_signal.emit(self.selected_object)
             self.update()
             return
-
-        if self.is_moving and self.pm.selected_object:
-            dx = wx - self.drag_start_x
-            dy = wy - self.drag_start_y
-            self.pm.translate_selected(dx, dy)
-            self.drag_start_x = wx
-            self.drag_start_y = wy
+        if self.is_rotating and self.selected_object:
+            rect = self.selected_object.rect
+            curr_angle = self._angle_to_mouse(rect.center().x(), rect.center().y(), wx, wy)
+            self.selected_object.rotation = (self.initial_rotation + curr_angle - self.rotate_start_angle) % 360
+            self.object_selected_signal.emit(self.selected_object)
             self.update()
-    #MODIFICARE ROTIRE
+
     def mouseReleaseEvent(self, e):
-        scale = self.pm.get_view_scale()
-        if e.button() == Qt.RightButton:
-            self.is_rotating = False
-            self.project_changed_signal.emit()
+        if self.is_drawing_wall and self.current_tool_mode == "wall":
+            self.is_drawing_wall = False
+            if self.wall_start_pt != self.wall_temp_end:
+                new_wall = Wall(self.wall_start_pt.x(), self.wall_start_pt.y(),
+                                self.wall_temp_end.x(), self.wall_temp_end.y())
+                self.objects.append(new_wall)
+                self.select_object(new_wall)
+                self.project_changed_signal.emit()
             self.update()
-            return
         if e.button() == Qt.MiddleButton:
             self.is_panning = False
             self.setCursor(Qt.ArrowCursor)
-            return
-
-        if e.button() != Qt.LeftButton:
-            return
-
-        wx = (e.x() - self.offset_x) / scale
-        wy = (e.y() - self.offset_y) / scale
-
-        # FINISH MOVE
-        if self.is_moving:
-            self.is_moving = False
-
-            # FIX CRUCIAL – PREVINE DESENAREA DUPĂ MUTARE
-            self.is_drawing = False
-            self.current_tool = None
-
-            self.project_changed_signal.emit()
-            self.update()
-            return
-
-        # FINISH DRAW
-        if self.is_drawing and self.current_tool:
-            self.is_drawing = False
-
-            sx = self.start_x
-            sy = self.start_y
-            ex = wx
-            ey = wy
-
-            if self.pm.current_project and self.pm.current_project.snap_to_grid:
-                ex, ey = self.pm.coordinate_system.snap_to_grid(ex, ey)
-
-            if self.current_tool == "wall":
-                self.pm.add_wall(sx, sy, ex, ey)
-                self.status_message_signal.emit("Perete adăugat")
-            elif self.current_tool == "door":
-                self.pm.add_door(min(sx, ex), min(sy, ey), abs(ex - sx), abs(ey - sy))
-                self.status_message_signal.emit("Ușă adăugată")
-            elif self.current_tool == "window":
-                self.pm.add_window(min(sx, ex), min(sy, ey), abs(ex - sx), abs(ey - sy))
-                self.status_message_signal.emit("Fereastră adăugată")
-            elif self.current_tool == "furniture":
-                self.pm.add_furniture(min(sx, ex), min(sy, ey), abs(ex - sx), abs(ey - sy), "mobilier")
-                self.status_message_signal.emit("Mobilier adăugat")
-
-            self.project_changed_signal.emit()
-            self.update()
-
-    # =============================== WHEEL ==============================
+        self.is_moving = False
+        self.is_rotating = False
 
     def wheelEvent(self, e):
-        # Ctrl + scroll = zoom
-        if not (e.modifiers() & Qt.ControlModifier):
-            e.ignore()
-            return
+        if e.modifiers() & Qt.ControlModifier:
+            old_wx = (e.x() - self.offset_x) / self.zoom_scale
+            old_wy = (e.y() - self.offset_y) / self.zoom_scale
+            factor = 1.1 if e.angleDelta().y() > 0 else 0.9
+            self.zoom_scale = max(0.1, min(5.0, self.zoom_scale * factor))
+            self.offset_x = e.x() - old_wx * self.zoom_scale
+            self.offset_y = e.y() - old_wy * self.zoom_scale
+            self.status_message_signal.emit(f"Zoom: {int(self.zoom_scale * 100)}%")
+            self.update()
+        else:
+            super().wheelEvent(e)
 
-        scale = self.pm.get_view_scale()
-        cx = e.x()
-        cy = e.y()
+    def set_tool_wall(self):
+        self.current_tool_mode = "wall"
+        self.select_object(None)
+        self.setCursor(Qt.CrossCursor)
+        self.status_message_signal.emit("Unealta Perete: Click si trage.")
 
-        wx = (cx - self.offset_x) / scale
-        wy = (cy - self.offset_y) / scale
+    def set_tool_window(self):
+        self.current_tool_mode = "window"
+        self.select_object(None)
+        self.setCursor(Qt.CrossCursor)
+        self.status_message_signal.emit("Unealta Fereastră: Click pentru a plasa.")
 
-        factor = 1.1 if e.angleDelta().y() > 0 else 0.9
-        new_scale = max(0.1, min(10.0, scale * factor))
+    def set_tool_svg(self, path):
+        self.current_tool_mode = "svg_placement"
+        self.current_svg_path = path
+        self.select_object(None)
+        self.setCursor(Qt.CrossCursor)
+        self.status_message_signal.emit("Unealta Mobilier: Click pentru a plasa.")
 
-        self.pm.set_view_scale(new_scale)
+    def place_object_at(self, x, y):
+        new_obj = None
+        if self.current_tool_mode == "window":
+            new_obj = Window(x - 50, y - 7, 100, 15)
+        elif self.current_tool_mode == "svg_placement" and self.current_svg_path:
+            new_obj = SvgFurnitureObject(self.current_svg_path, x=x, y=y)
+            new_obj.move_to(QPointF(x, y))
 
-        self.offset_x = cx - wx * new_scale
-        self.offset_y = cy - wy * new_scale
+        if new_obj:
+            self.objects.append(new_obj)
+            self.select_object(new_obj)
+            self.project_changed_signal.emit()
+            if self.current_tool_mode == "svg_placement":
+                self.current_tool_mode = None
+                self.setCursor(Qt.ArrowCursor)
+            self.update()
 
-        self.status_message_signal.emit(f"Zoom: {new_scale:.2f}x")
+    def select_object(self, obj):
+        for o in self.objects: o.is_selected = False
+        self.selected_object = obj
+        if obj: obj.is_selected = True
+        self.object_selected_signal.emit(obj)
         self.update()
 
-#=================================Rotire=========================
+    def dist_to_segment(self, p, wall):
+        x, y = p.x(), p.y()
+        x1, y1, x2, y2 = wall.x1, wall.y1, wall.x2, wall.y2
+        A = x - x1;
+        B = y - y1;
+        C = x2 - x1;
+        D = y2 - y1
+        dot = A * C + B * D
+        len_sq = C * C + D * D
+        param = -1
+        if len_sq != 0: param = dot / len_sq
+        if param < 0:
+            xx, yy = x1, y1
+        elif param > 1:
+            xx, yy = x2, y2
+        else:
+            xx, yy = x1 + param * C, y1 + param * D
+        return math.sqrt((x - xx) ** 2 + (y - yy) ** 2)
 
     def _angle_to_mouse(self, cx, cy, mx, my):
-        dx = mx - cx
-        dy = my - cy
-        return math.degrees(math.atan2(dy, dx))
+        return math.degrees(math.atan2(my - cy, mx - cx))
 
-# =====================================================================
-# WORKPAGE
-# =====================================================================
+    def delete_selection(self):
+        if self.selected_object and self.selected_object in self.objects:
+            self.objects.remove(self.selected_object)
+            self.select_object(None)
+            self.project_changed_signal.emit()
+            self.update()
+
+    def clear_scene(self):
+        self.objects.clear()
+        self.select_object(None)
+        self.project_changed_signal.emit()
+        self.update()
 
 class WorkPage(Page):
-
-    # -------------------------- Undo / Redo ---------------------------
-
-    def undo(self):
-        if self.pm.undo():
-            self.canvas.update()
-            self.refresh_statistics()
-            self.lbl_status.setText("Undo realizat")
-        else:
-            self.lbl_status.setText("Nu există acțiuni pentru undo")
-
-    def redo(self):
-        if self.pm.redo():
-            self.canvas.update()
-            self.refresh_statistics()
-            self.lbl_status.setText("Redo realizat")
-        else:
-            self.lbl_status.setText("Nu există acțiuni pentru redo")
-
-    # ----------------------------- INIT UI ----------------------------
-
     def init_ui(self):
         self.pm = ProjectManager()
         if not self.pm.current_project:
-            self.pm.create_new_project("Proiect Nou")
+            self.pm.create_new_project("Proiect Hibrid")
 
-        main = QVBoxLayout()
+        main = QVBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(0)
 
@@ -433,414 +332,255 @@ class WorkPage(Page):
         content = QHBoxLayout()
         content.setSpacing(0)
 
-        content.addWidget(self.create_toolbar())
-
-        canvas_holder = QWidget()
-        ch_layout = QVBoxLayout()
-        ch_layout.setContentsMargins(10, 10, 10, 10)
-
         self.canvas = SimpleCanvas(self)
-        ch_layout.addWidget(self.canvas)
 
-        canvas_holder.setLayout(ch_layout)
-        content.addWidget(canvas_holder, 1)
+        # Meniu Stanga
+        content.addWidget(self.create_left_panel())
 
+        # Canvas
+        canvas_container = QWidget()
+        cl = QVBoxLayout(canvas_container)
+        cl.setContentsMargins(5, 5, 5, 5)
+        cl.addWidget(self.canvas)
+        content.addWidget(canvas_container, 1)
+
+        # Meniu Dreapta
         content.addWidget(self.create_right_panel())
 
         main.addLayout(content, 1)
         main.addWidget(self.create_footer())
 
-        self.setLayout(main)
-
-        # Conexiuni semnale
         self.canvas.status_message_signal.connect(self.lbl_status.setText)
-        self.canvas.mouse_moved_signal.connect(self.update_mouse_position)
-        self.canvas.project_changed_signal.connect(self.refresh_statistics)
+        self.canvas.project_changed_signal.connect(self.refresh_stats)
+        self.canvas.object_selected_signal.connect(self.update_properties)
+        self.canvas.mouse_moved_signal.connect(lambda x, y: None)
 
-        # Shortcuts
-        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self.undo)
-        QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self.redo)
-
-        # Timer pentru refresh statisitici (optional)
-        self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.refresh_statistics)
-        self.refresh_timer.start(1000)
-    #MODIFICARE PT ROTIRE
-        QShortcut(QKeySequence("Escape"), self).activated.connect(self.deselect_all)
-
-        self.refresh_statistics()
-
-    # ----------------------------- HEADER -----------------------------
+        QShortcut(QKeySequence("Delete"), self).activated.connect(self.canvas.delete_selection)
+        QShortcut(QKeySequence("Escape"), self).activated.connect(self.action_cancel)
 
     def create_header(self):
         w = QWidget()
-        w.setStyleSheet("""
-            QWidget { background-color: #03254C; padding: 8px; }
-            QPushButton {
-                background-color: #185E8A;
-                color: white;
-                border: none;
-                padding: 6px 14px;
-                border-radius: 4px;
-                margin: 0 4px;
-            }
-            QPushButton:hover { background-color: #2679AE; }
-            QLabel { color: white; font-size: 18px; font-weight: bold; }
-        """)
-
-        h = QHBoxLayout()
-
-        h.addWidget(QLabel("Floor Plan Architecture - Workspace"))
+        w.setStyleSheet("background-color: #03254C; color: white; padding: 5px;")
+        h = QHBoxLayout(w)
+        h.addWidget(QLabel("<b>Architect App</b>"))
         h.addStretch()
-
-        btn_new = QPushButton("Nou")
-        btn_new.clicked.connect(self.new_project)
-        h.addWidget(btn_new)
-
-        btn_save = QPushButton("Salvează")
+        btn_save = QPushButton("💾 Salvează")
+        btn_save.setStyleSheet("border:none; background:#185E8A; padding:5px; border-radius:3px;")
         btn_save.clicked.connect(self.save_project)
         h.addWidget(btn_save)
-
-        btn_load = QPushButton("Deschide")
+        btn_load = QPushButton("📂 Deschide")
+        btn_load.setStyleSheet("border:none; background:#185E8A; padding:5px; border-radius:3px;")
         btn_load.clicked.connect(self.load_project)
         h.addWidget(btn_load)
-
-        btn_menu = QPushButton("Meniu")
-        btn_menu.clicked.connect(lambda: self.dashboard.update_page("main"))
-        h.addWidget(btn_menu)
-
-        w.setLayout(h)
+        btn_back = QPushButton("🏠 Meniu")
+        btn_back.setStyleSheet("border:none; background:#185E8A; padding:5px; border-radius:3px;")
+        btn_back.clicked.connect(lambda: self.dashboard.update_page("main"))
+        h.addWidget(btn_back)
         return w
 
-    # ----------------------------- TOOLBAR ----------------------------
-
-    def create_toolbar(self):
+    def create_left_panel(self):
         w = QWidget()
-        w.setFixedWidth(200)
-        w.setStyleSheet("""
-            QWidget { background-color: #F7F3E8; padding: 10px; }
-            QPushButton {
-                background-color: #008080;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 10px;
-                margin: 4px 0;
-                text-align: left;
-            }
-            QPushButton:hover { background-color: #009999; }
-            QPushButton:checked { background-color: #FF6F61; }
-            QGroupBox {
-                border: 2px solid #D1C4A5;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                font-weight: bold;
-            }
+        w.setFixedWidth(250)
+        w.setStyleSheet("background-color: #F7F3E8;")
+        v = QVBoxLayout(w)
+        v.setContentsMargins(5, 10, 5, 5)
+
+        gb_view = QGroupBox("Vizualizare")
+        v_view = QVBoxLayout(gb_view)
+        self.chk_grid = QCheckBox("Arată Grila")
+        self.chk_grid.setChecked(True)
+        self.chk_grid.toggled.connect(lambda v: setattr(self.canvas, 'grid_visible', v) or self.canvas.update())
+        v_view.addWidget(self.chk_grid)
+        self.chk_snap = QCheckBox("Snap to Grid")
+        self.chk_snap.setChecked(True)
+        self.chk_snap.toggled.connect(lambda v: setattr(self.canvas, 'snap_to_grid', v))
+        v_view.addWidget(self.chk_snap)
+        v.addWidget(gb_view)
+
+        # Toolbox Principal
+        self.toolbox = QToolBox()
+        self.toolbox.setStyleSheet("""
+            QToolBox::tab { background: #E0D8C0; border: 1px solid #aaa; border-radius: 2px; color: black; font-weight: bold; }
+            QListWidget { border: none; background: #F7F3E8; }
         """)
 
-        v = QVBoxLayout()
-        v.setAlignment(Qt.AlignTop)
+        # 1. Structura
+        list_struct = QListWidget()
+        list_struct.setIconSize(QSize(32, 32))
+        item_wall = QListWidgetItem("Perete (Linie)")
+        item_wall.setData(Qt.UserRole, "CMD_WALL")
+        list_struct.addItem(item_wall)
+        item_win = QListWidgetItem("Fereastră (Albastru)")
+        item_win.setData(Qt.UserRole, "CMD_WINDOW")
+        list_struct.addItem(item_win)
+        list_struct.itemClicked.connect(self.on_menu_item_clicked)
+        self.toolbox.addItem(list_struct, "Structură")
 
-        # Tools
-        tools = QGroupBox("Unelte desenare")
-        tl = QVBoxLayout()
+        # doors si furniture
+        self.load_assets_structured()
 
-        self.btn_wall = QPushButton("Perete")
-        self.btn_wall.setCheckable(True)
-        self.btn_wall.clicked.connect(lambda: self.select_tool("wall"))
-        tl.addWidget(self.btn_wall)
+        v.addWidget(self.toolbox)
 
-        self.btn_door = QPushButton("Ușă")
-        self.btn_door.setCheckable(True)
-        self.btn_door.clicked.connect(lambda: self.select_tool("door"))
-        tl.addWidget(self.btn_door)
-
-        self.btn_window = QPushButton("Fereastră")
-        self.btn_window.setCheckable(True)
-        self.btn_window.clicked.connect(lambda: self.select_tool("window"))
-        tl.addWidget(self.btn_window)
-
-        self.btn_furniture = QPushButton("Mobilier")
-        self.btn_furniture.setCheckable(True)
-        self.btn_furniture.clicked.connect(lambda: self.select_tool("furniture"))
-        tl.addWidget(self.btn_furniture)
-
-        tools.setLayout(tl)
-        v.addWidget(tools)
-
-        # Grid settings
-        grid = QGroupBox("Setări grilă")
-        gl = QVBoxLayout()
-
-        size_row = QHBoxLayout()
-        size_row.addWidget(QLabel("Dimensiune:"))
-        self.grid_size_spin = QSpinBox()
-        self.grid_size_spin.setRange(5, 100)
-        if self.pm.current_project:
-            self.grid_size_spin.setValue(self.pm.current_project.grid_size)
-        self.grid_size_spin.valueChanged.connect(self.change_grid_size)
-        size_row.addWidget(self.grid_size_spin)
-        gl.addLayout(size_row)
-
-        self.grid_visible_check = QCheckBox("Afișează grila")
-        self.grid_visible_check.setChecked(
-            self.pm.current_project.grid_visible if self.pm.current_project else True
-        )
-        self.grid_visible_check.stateChanged.connect(self.toggle_grid_visibility)
-        gl.addWidget(self.grid_visible_check)
-
-        self.snap_check = QCheckBox("Snap to grid")
-        self.snap_check.setChecked(
-            self.pm.current_project.snap_to_grid if self.pm.current_project else True
-        )
-        self.snap_check.stateChanged.connect(self.toggle_snap_to_grid)
-        gl.addWidget(self.snap_check)
-
-        grid.setLayout(gl)
-        v.addWidget(grid)
-
-        # Clear
-        btn_clear = QPushButton("Șterge tot")
-        btn_clear.setStyleSheet("background-color: #E74C3C;")
-        btn_clear.clicked.connect(self.clear_all)
+        btn_clear = QPushButton("Sterge Tot")
+        btn_clear.setStyleSheet("background: #E74C3C; color: white; padding: 5px;")
+        btn_clear.clicked.connect(self.canvas.clear_scene)
         v.addWidget(btn_clear)
-
-        v.addStretch()
-        w.setLayout(v)
         return w
 
-    # -------------------------- RIGHT PANEL ---------------------------
+    def load_assets_structured(self):
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.dirname(current_dir)
+
+        possible_paths = [
+            os.path.join(root_dir, "resources", "assets"),
+            os.path.join(current_dir, "resources", "assets")
+        ]
+        assets_dir = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                assets_dir = p
+                break
+
+        if not assets_dir:
+            print("Assets folder not found.")
+            return
+
+        # 1 Usi
+        doors_path = os.path.join(assets_dir, "doors")
+        if os.path.exists(doors_path):
+            self.add_grid_category("Uși", doors_path)
+
+        # 2 Mobilier
+        furn_path = os.path.join(assets_dir, "furniture")
+        if os.path.exists(furn_path):
+            subfolders = sorted([d for d in os.listdir(furn_path) if os.path.isdir(os.path.join(furn_path, d))])
+            for folder_name in subfolders:
+                full_path = os.path.join(furn_path, folder_name)
+                self.add_grid_category(folder_name.capitalize(), full_path)
+
+    def add_grid_category(self, title, path):
+        list_w = QListWidget()
+
+        list_w.setViewMode(QListWidget.IconMode)
+        list_w.setResizeMode(QListWidget.Adjust)
+        list_w.setIconSize(QSize(65, 65))
+        list_w.setSpacing(10)
+        list_w.setMovement(QListWidget.Static)
+        list_w.setWordWrap(True)
+
+        list_w.itemClicked.connect(self.on_menu_item_clicked)
+
+        try:
+            files = sorted([f for f in os.listdir(path) if f.lower().endswith(('.svg', '.png'))])
+            for f in files:
+                clean_name = os.path.splitext(f)[0].replace('AdobeStock_', '').replace('_', ' ').title()
+
+                if len(clean_name) > 15:
+                    clean_name = clean_name[:12] + "..."
+
+                item = QListWidgetItem(clean_name)
+                full_path = os.path.join(path, f)
+                item.setData(Qt.UserRole, full_path)
+
+                item.setToolTip(os.path.splitext(f)[0].replace('_', ' ').title())
+
+                pix = QPixmap(full_path)
+                if not pix.isNull():
+                    item.setIcon(QIcon(pix))
+
+                list_w.addItem(item)
+
+            if list_w.count() > 0:
+                self.toolbox.addItem(list_w, title)
+        except Exception as e:
+            print(f"Error loading category {title}: {e}")
+
+    def on_menu_item_clicked(self, item):
+        data = item.data(Qt.UserRole)
+        if data == "CMD_WALL":
+            self.canvas.set_tool_wall()
+        elif data == "CMD_WINDOW":
+            self.canvas.set_tool_window()
+        elif data:
+            self.canvas.set_tool_svg(data)
 
     def create_right_panel(self):
         w = QWidget()
-        w.setFixedWidth(260)
-        w.setStyleSheet("""
-            QWidget { background-color: #FEFCF3; padding: 10px; }
-            QGroupBox {
-                border: 2px solid #D1C4A5;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                font-weight: bold;
-            }
-            QLabel { padding: 2px; }
-        """)
-
-        v = QVBoxLayout()
-        v.setAlignment(Qt.AlignTop)
-
-        # Stats
-        stats = QGroupBox("Statistici proiect")
-        sv = QVBoxLayout()
-
-        self.lbl_project_name = QLabel("Proiect: -")
-        self.lbl_total_objects = QLabel("Total obiecte: 0")
-        self.lbl_walls = QLabel("Pereți: 0")
-        self.lbl_doors = QLabel("Uși: 0")
-        self.lbl_windows = QLabel("Ferestre: 0")
-        self.lbl_furniture = QLabel("Mobilier: 0")
-        self.lbl_wall_length = QLabel("Lungime pereți: 0")
-
-        for lab in [
-            self.lbl_project_name, self.lbl_total_objects, self.lbl_walls,
-            self.lbl_doors, self.lbl_windows, self.lbl_furniture, self.lbl_wall_length
-        ]:
-            sv.addWidget(lab)
-
-        stats.setLayout(sv)
-        v.addWidget(stats)
-
-        # Grid / canvas info
-        info = QGroupBox("Canvas / Grilă")
-        iv = QVBoxLayout()
-
-        self.lbl_grid_size = QLabel("Grilă: -")
-        self.lbl_snap = QLabel("Snap: -")
-        self.lbl_canvas_size = QLabel("Dimensiune canvas: -")
-        self.lbl_conversion = QLabel("Conversie: -")
-
-        iv.addWidget(self.lbl_grid_size)
-        iv.addWidget(self.lbl_snap)
-        iv.addWidget(self.lbl_canvas_size)
-        iv.addWidget(self.lbl_conversion)
-
-        info.setLayout(iv)
-        v.addWidget(info)
-
+        w.setFixedWidth(240)
+        w.setStyleSheet("background-color: #FEFCF3; border-left: 1px solid #ccc;")
+        v = QVBoxLayout(w)
+        self.gb_props = QGroupBox("Proprietăți")
+        vp = QVBoxLayout(self.gb_props)
+        self.lbl_name = QLabel("Nume: -")
+        vp.addWidget(self.lbl_name)
+        vp.addWidget(QLabel("Rotatie:"))
+        self.spin_rot = QSpinBox()
+        self.spin_rot.setRange(0, 360)
+        self.spin_rot.setSingleStep(45)
+        self.spin_rot.valueChanged.connect(self.on_rotation_changed)
+        vp.addWidget(self.spin_rot)
+        self.gb_props.setEnabled(False)
+        v.addWidget(self.gb_props)
         v.addStretch()
-        w.setLayout(v)
         return w
 
-    # ------------------------------ FOOTER -----------------------------
+    def on_rotation_changed(self, val):
+        obj = self.canvas.selected_object
+        if obj and not isinstance(obj, Wall):
+            obj.rotation = val
+            self.canvas.update()
 
     def create_footer(self):
         w = QWidget()
-        w.setStyleSheet("""
-            QWidget { background-color: #185E8A; padding: 6px 10px; }
-            QLabel { color: white; font-size: 12px; }
-        """)
-
-        h = QHBoxLayout()
-        self.lbl_status = QLabel("Gata | Selectează o unealtă")
+        w.setStyleSheet("background:#185E8A; color:white;")
+        h = QHBoxLayout(w)
+        self.lbl_status = QLabel("Gata.")
         h.addWidget(self.lbl_status)
-        h.addStretch()
-
-        w.setLayout(h)
         return w
-#MODIFICARE PT ROTIRE
-    def deselect_all(self):
-        # deselectăm obiect
-        self.pm.select_object(None)
 
-        # deselectăm toate uneltele
-        for b in [self.btn_wall, self.btn_door, self.btn_window, self.btn_furniture]:
-            b.setChecked(False)
+    def refresh_stats(self):
+        pass
 
-        # anulăm tool-ul curent
-        self.canvas.current_tool = None
+    def update_properties(self, obj):
+        if obj:
+            self.gb_props.setEnabled(True)
+            self.spin_rot.blockSignals(True)
+            if isinstance(obj, Wall):
+                self.lbl_name.setText("Perete")
+                self.spin_rot.setEnabled(False)
+                self.spin_rot.setValue(0)
+            elif isinstance(obj, Window):
+                self.lbl_name.setText("Fereastră")
+                self.spin_rot.setEnabled(True)
+                self.spin_rot.setValue(int(obj.rotation))
+            else:
+                self.lbl_name.setText(getattr(obj, 'name', 'Obiect'))
+                self.spin_rot.setEnabled(True)
+                self.spin_rot.setValue(int(obj.rotation))
+            self.spin_rot.blockSignals(False)
+        else:
+            self.gb_props.setEnabled(False)
+            self.lbl_name.setText("-")
 
-        self.lbl_status.setText("Gata | Nimic selectat")
-        self.canvas.update()
-
-    # ----------------------- TOOLBAR / GRID LOGIC ----------------------
-
-    def select_tool(self, tool: str):
-        for b in [self.btn_wall, self.btn_door, self.btn_window, self.btn_furniture]:
-            b.setChecked(False)
-
-        if tool == "wall":
-            self.btn_wall.setChecked(True)
-            self.lbl_status.setText("Perete: click & drag pentru desenare")
-        elif tool == "door":
-            self.btn_door.setChecked(True)
-            self.lbl_status.setText("Ușă: click & drag pentru desenare")
-        elif tool == "window":
-            self.btn_window.setChecked(True)
-            self.lbl_status.setText("Fereastră: click & drag pentru desenare")
-        elif tool == "furniture":
-            self.btn_furniture.setChecked(True)
-            self.lbl_status.setText("Mobilier: click & drag pentru desenare")
-
-        self.canvas.current_tool = tool
-
-    def change_grid_size(self, value: int):
-        if self.pm.current_project:
-            self.pm.current_project.grid_size = value
-        # dacă CoordinateSystem are set_grid_size, îl folosim
-        if hasattr(self.pm.coordinate_system, "set_grid_size"):
-            self.pm.coordinate_system.set_grid_size(value)
-
-        self.canvas.update()
-        self.refresh_statistics()
-
-    def toggle_grid_visibility(self):
-        if self.pm.current_project:
-            self.pm.current_project.grid_visible = bool(self.grid_visible_check.isChecked())
-        self.canvas.update()
-        self.refresh_statistics()
-
-    def toggle_snap_to_grid(self):
-        if self.pm.current_project:
-            self.pm.current_project.snap_to_grid = bool(self.snap_check.isChecked())
-        self.refresh_statistics()
-
-    # ---------------------------- PROJECT OPS --------------------------
-
-    def clear_all(self):
-        if not self.pm.current_project:
-            return
-
-        reply = QMessageBox.question(
-            self, "Confirmare",
-            "Sigur dorești să ștergi toate obiectele?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        if reply != QMessageBox.Yes:
-            return
-
-        # curățăm tot
-        self.pm.current_project.clear()
-        self.pm._clear_cache()
-        # punem stare nouă în istoric
-        self.pm._push_history()
-
-        self.canvas.update()
-        self.refresh_statistics()
-        self.lbl_status.setText("Toate obiectele au fost șterse")
-
-    def new_project(self):
-        self.pm.create_new_project("Proiect Nou")
-        self.canvas.update()
-        self.refresh_statistics()
-        self.lbl_status.setText("Proiect nou creat")
+    def action_cancel(self):
+        self.canvas.current_tool_mode = None
+        self.canvas.select_object(None)
+        self.lbl_status.setText("Anulat.")
+        self.canvas.setCursor(Qt.ArrowCursor)
 
     def save_project(self):
-        fname, _ = QFileDialog.getSaveFileName(
-            self, "Salvează proiect", "", "JSON Files (*.json)"
-        )
-        if not fname:
-            return
-
-        if self.pm.save_project(fname):
-            QMessageBox.information(self, "Succes", f"Proiect salvat: {fname}")
-            self.lbl_status.setText(f"Proiect salvat: {fname}")
-        else:
-            QMessageBox.warning(self, "Eroare", "Nu s-a putut salva proiectul")
+        fname, _ = QFileDialog.getSaveFileName(self, "Salveaza", "", "JSON (*.json)")
+        if fname:
+            if self.pm.save_project(fname, self.canvas.objects):
+                QMessageBox.information(self, "Succes", "Salvat cu succes!")
+            else:
+                QMessageBox.warning(self, "Eroare", "Nu s-a putut salva.")
 
     def load_project(self):
-        fname, _ = QFileDialog.getOpenFileName(
-            self, "Deschide proiect", "", "JSON Files (*.json)"
-        )
-        if not fname:
-            return
-
-        if self.pm.load_project(fname):
-            self.canvas.update()
-            self.refresh_statistics()
-            QMessageBox.information(self, "Succes", f"Proiect încărcat: {fname}")
-            self.lbl_status.setText(f"Proiect încărcat: {fname}")
-        else:
-            QMessageBox.warning(self, "Eroare", "Nu s-a putut încărca proiectul")
-
-    # ----------------------------- UI UPDATE ---------------------------
-
-    def update_mouse_position(self, x: int, y: int):
-        # nu stricăm statusul dacă e ceva important acolo, doar îl completăm:
-        self.lbl_status.setText(f"Mouse: ({x}, {y})")
-
-    def refresh_statistics(self):
-        st = self.pm.get_statistics()
-        if not st:
-            return
-
-        self.lbl_project_name.setText(f"Proiect: {st['project_name']}")
-        self.lbl_total_objects.setText(f"Total obiecte: {st['total_objects']}")
-        self.lbl_walls.setText(f"Pereți: {st['walls_count']}")
-        self.lbl_doors.setText(f"Uși: {st['doors_count']}")
-        self.lbl_windows.setText(f"Ferestre: {st['windows_count']}")
-        self.lbl_furniture.setText(f"Mobilier: {st['furniture_count']}")
-        self.lbl_wall_length.setText(f"Lungime pereți: {st['total_wall_length']}")
-
-        self.lbl_grid_size.setText(f"Grilă: {st['grid_size']} px")
-        self.lbl_snap.setText(f"Snap: {'Activ' if st['snap_to_grid'] else 'Inactiv'}")
-        self.lbl_canvas_size.setText(
-            f"Dimensiune canvas: {st['canvas_width']} x {st['canvas_height']}"
-        )
-
-        # conversie px -> cm dacă există metoda în CoordinateSystem
-        if hasattr(self.pm.coordinate_system, "get_grid_spacing_cm"):
-            cm = self.pm.coordinate_system.get_grid_spacing_cm()
-            self.lbl_conversion.setText(f"{st['grid_size']} px = {cm:.1f} cm")
-        else:
-            self.lbl_conversion.setText("Conversie: nedefinită")
-
-        sel = self.pm.selected_object
-        if sel and not self.canvas.current_tool:
-            self.lbl_status.setText(
-                f"Obiect selectat: {type(sel).__name__} la ({sel.x:.0f}, {sel.y:.0f})"
-            )
-        elif not self.canvas.current_tool:
-            self.lbl_status.setText("Gata | Selectează o unealtă sau un obiect")
-
+        fname, _ = QFileDialog.getOpenFileName(self, "Deschide", "", "JSON (*.json)")
+        if fname:
+            objs = self.pm.load_project(fname)
+            if objs is not None:
+                self.canvas.objects = objs
+                self.canvas.update()
+                QMessageBox.information(self, "Succes", "Incarcat cu succes!")
