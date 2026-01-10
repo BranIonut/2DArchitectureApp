@@ -147,8 +147,8 @@ class SvgFurnitureObject:
             self.is_wall_attachment = False
 
         self.renderer = None
-        self.pixmap = None
-        self.is_valid = False
+        self.pixmap = QPixmap(self.file_path)
+        self.is_valid = not self.pixmap.isNull()
 
         self._load_resource()
 
@@ -212,6 +212,7 @@ class SvgFurnitureObject:
         painter.translate(-cx, -cy)
 
         target = QRectF(self.x, self.y, self.width, self.height)
+        painter.drawPixmap(target.toRect(), self.pixmap)
 
         if self.renderer and self.renderer.isValid():
             self.renderer.render(painter, target)
