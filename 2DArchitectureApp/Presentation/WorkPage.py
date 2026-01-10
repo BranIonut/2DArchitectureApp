@@ -5,10 +5,10 @@ import sys
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QMessageBox, QFileDialog, QSpinBox, QCheckBox, QShortcut, QToolBox,
-    QListWidget, QListWidgetItem, QSplitter, QAbstractItemView
+    QListWidget, QListWidgetItem, QAbstractItemView
 )
-from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence, QIcon, QPixmap, QFont
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QPointF, QSize, QRectF
+from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence, QIcon, QPixmap
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QSize, QRectF ,QMarginsF
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
@@ -20,9 +20,11 @@ from .Page import Page
 try:
     from Business.ProjectManager import ProjectManager
     from Business.ArchitecturalObjects import SvgFurnitureObject, Wall, Window
+    from Business.CollisionDetector import CollisionDetector
 except ImportError:
     from ProjectManager import ProjectManager
     from ArchitecturalObjects import SvgFurnitureObject, Wall, Window
+    from CollisionDetector import CollisionDetector
 
 class SimpleCanvas(QWidget):
     mouse_moved_signal = pyqtSignal(int, int)
@@ -98,7 +100,11 @@ class SimpleCanvas(QWidget):
 
     def draw_wall(self, painter, wall):
         color = QColor(64, 64, 64)
-        if wall.is_selected: color = Qt.red
+        if wall.is_colliding:
+            color = QColor(255, 69, 0)
+        elif wall.is_selected:
+            color = Qt.red
+
         pen = QPen(color, wall.thickness)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
@@ -111,12 +117,63 @@ class SimpleCanvas(QWidget):
         painter.rotate(win.rotation)
         painter.translate(-center)
         rect = QRectF(win.x, win.y, win.width, win.height)
+
         painter.setBrush(QBrush(QColor(173, 216, 230, 200)))
-        painter.setPen(QPen(Qt.red if win.is_selected else Qt.blue, 2))
+
+        if win.is_colliding:
+            painter.setPen(QPen(QColor(255, 69, 0), 3))
+        else:
+            painter.setPen(QPen(Qt.red if win.is_selected else Qt.blue, 2))
+
         painter.drawRect(rect)
         painter.drawLine(QPointF(win.x, win.y + win.height / 2),
                          QPointF(win.x + win.width, win.y + win.height / 2))
         painter.restore()
+
+    def check_collisions(self):
+        for obj in self.objects:
+            obj.is_colliding = False
+
+        count = len(self.objects)
+        for i in range(count):
+            obj1 = self.objects[i]
+            rect1 = obj1.rect
+
+            for j in range(i + 1, count):
+                obj2 = self.objects[j]
+                rect2 = obj2.rect
+
+                intersection = rect1.intersected(rect2)
+
+                if intersection.isEmpty():
+                    continue
+
+                is_obj1_wall = isinstance(obj1, Wall)
+                is_obj2_wall = isinstance(obj2, Wall)
+
+                if is_obj1_wall and is_obj2_wall:
+                    continue
+
+                is_obj1_attach = getattr(obj1, 'is_wall_attachment', False)
+                is_obj2_attach = getattr(obj2, 'is_wall_attachment', False)
+
+                if (is_obj1_wall and is_obj2_attach) or (is_obj2_wall and is_obj1_attach):
+                    continue
+
+                if (is_obj1_wall and not is_obj2_attach) or (is_obj2_wall and not is_obj1_attach):
+                    overlap_depth = min(intersection.width(), intersection.height())
+
+                    if overlap_depth <= 6.0:
+                        continue
+                    else:
+                        obj1.is_colliding = True
+                        obj2.is_colliding = True
+                        continue
+
+                overlap_depth = min(intersection.width(), intersection.height())
+                if overlap_depth > 1.0:
+                    obj1.is_colliding = True
+                    obj2.is_colliding = True
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MiddleButton:
@@ -156,11 +213,9 @@ class SimpleCanvas(QWidget):
                         clicked_obj = obj
                         break
                 elif isinstance(obj, (Window, SvgFurnitureObject)):
-                    # === FIX AICI: Folosim rect.contains în loc de obj.contains ===
                     if obj.rect.contains(pos_pt):
                         clicked_obj = obj
                         break
-
             self.select_object(clicked_obj)
             if clicked_obj:
                 self.is_moving = True
@@ -200,6 +255,7 @@ class SimpleCanvas(QWidget):
             else:
                 self.selected_object.x = self.obj_start_pos.x() + dx
                 self.selected_object.y = self.obj_start_pos.y() + dy
+            self.check_collisions()
             self.object_selected_signal.emit(self.selected_object)
             self.update()
             return
@@ -207,6 +263,7 @@ class SimpleCanvas(QWidget):
             rect = self.selected_object.rect
             curr_angle = self._angle_to_mouse(rect.center().x(), rect.center().y(), wx, wy)
             self.selected_object.rotation = (self.initial_rotation + curr_angle - self.rotate_start_angle) % 360
+            self.check_collisions()
             self.object_selected_signal.emit(self.selected_object)
             self.update()
 
@@ -218,6 +275,7 @@ class SimpleCanvas(QWidget):
                                 self.wall_temp_end.x(), self.wall_temp_end.y())
                 self.objects.append(new_wall)
                 self.select_object(new_wall)
+                self.check_collisions()
                 self.project_changed_signal.emit()
             self.update()
         if e.button() == Qt.MiddleButton:
@@ -269,6 +327,7 @@ class SimpleCanvas(QWidget):
         if new_obj:
             self.objects.append(new_obj)
             self.select_object(new_obj)
+            self.check_collisions()
             self.project_changed_signal.emit()
             if self.current_tool_mode == "svg_placement":
                 self.current_tool_mode = None
@@ -308,6 +367,7 @@ class SimpleCanvas(QWidget):
         if self.selected_object and self.selected_object in self.objects:
             self.objects.remove(self.selected_object)
             self.select_object(None)
+            self.check_collisions()
             self.project_changed_signal.emit()
             self.update()
 
@@ -334,17 +394,14 @@ class WorkPage(Page):
 
         self.canvas = SimpleCanvas(self)
 
-        # Meniu Stanga
         content.addWidget(self.create_left_panel())
 
-        # Canvas
         canvas_container = QWidget()
         cl = QVBoxLayout(canvas_container)
         cl.setContentsMargins(5, 5, 5, 5)
         cl.addWidget(self.canvas)
         content.addWidget(canvas_container, 1)
 
-        # Meniu Dreapta
         content.addWidget(self.create_right_panel())
 
         main.addLayout(content, 1)
@@ -404,7 +461,6 @@ class WorkPage(Page):
             QListWidget { border: none; background: #F7F3E8; }
         """)
 
-        # 1. Structura
         list_struct = QListWidget()
         list_struct.setIconSize(QSize(32, 32))
         item_wall = QListWidgetItem("Perete (Linie)")
@@ -416,7 +472,6 @@ class WorkPage(Page):
         list_struct.itemClicked.connect(self.on_menu_item_clicked)
         self.toolbox.addItem(list_struct, "Structură")
 
-        # doors si furniture
         self.load_assets_structured()
 
         v.addWidget(self.toolbox)
@@ -430,7 +485,6 @@ class WorkPage(Page):
     def load_assets_structured(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         root_dir = os.path.dirname(current_dir)
-
         possible_paths = [
             os.path.join(root_dir, "resources", "assets"),
             os.path.join(current_dir, "resources", "assets")
@@ -442,15 +496,12 @@ class WorkPage(Page):
                 break
 
         if not assets_dir:
-            print("Assets folder not found.")
             return
 
-        # 1 Usi
         doors_path = os.path.join(assets_dir, "doors")
         if os.path.exists(doors_path):
             self.add_grid_category("Uși", doors_path)
 
-        # 2 Mobilier
         furn_path = os.path.join(assets_dir, "furniture")
         if os.path.exists(furn_path):
             subfolders = sorted([d for d in os.listdir(furn_path) if os.path.isdir(os.path.join(furn_path, d))])
@@ -460,36 +511,27 @@ class WorkPage(Page):
 
     def add_grid_category(self, title, path):
         list_w = QListWidget()
-
         list_w.setViewMode(QListWidget.IconMode)
         list_w.setResizeMode(QListWidget.Adjust)
         list_w.setIconSize(QSize(65, 65))
         list_w.setSpacing(10)
         list_w.setMovement(QListWidget.Static)
         list_w.setWordWrap(True)
-
         list_w.itemClicked.connect(self.on_menu_item_clicked)
 
         try:
             files = sorted([f for f in os.listdir(path) if f.lower().endswith(('.svg', '.png'))])
             for f in files:
                 clean_name = os.path.splitext(f)[0].replace('AdobeStock_', '').replace('_', ' ').title()
-
-                if len(clean_name) > 15:
-                    clean_name = clean_name[:12] + "..."
-
+                if len(clean_name) > 15: clean_name = clean_name[:12] + "..."
                 item = QListWidgetItem(clean_name)
                 full_path = os.path.join(path, f)
                 item.setData(Qt.UserRole, full_path)
-
                 item.setToolTip(os.path.splitext(f)[0].replace('_', ' ').title())
-
                 pix = QPixmap(full_path)
                 if not pix.isNull():
                     item.setIcon(QIcon(pix))
-
                 list_w.addItem(item)
-
             if list_w.count() > 0:
                 self.toolbox.addItem(list_w, title)
         except Exception as e:
@@ -511,14 +553,33 @@ class WorkPage(Page):
         v = QVBoxLayout(w)
         self.gb_props = QGroupBox("Proprietăți")
         vp = QVBoxLayout(self.gb_props)
+        # Nume
         self.lbl_name = QLabel("Nume: -")
         vp.addWidget(self.lbl_name)
-        vp.addWidget(QLabel("Rotatie:"))
+        # Rotatie
+        vp.addWidget(QLabel("Rotatie (°):"))
         self.spin_rot = QSpinBox()
         self.spin_rot.setRange(0, 360)
         self.spin_rot.setSingleStep(45)
         self.spin_rot.valueChanged.connect(self.on_rotation_changed)
         vp.addWidget(self.spin_rot)
+
+        # Width
+        vp.addWidget(QLabel("Lățime (cm/px):"))
+        self.spin_width = QSpinBox()
+        self.spin_width.setRange(10, 2000)
+        self.spin_width.setSingleStep(10)
+        self.spin_width.valueChanged.connect(self.on_width_changed)
+        vp.addWidget(self.spin_width)
+
+        # Height
+        vp.addWidget(QLabel("Înălțime/Grosime (cm/px):"))
+        self.spin_height = QSpinBox()
+        self.spin_height.setRange(5, 2000)
+        self.spin_height.setSingleStep(5)
+        self.spin_height.valueChanged.connect(self.on_height_changed)
+        vp.addWidget(self.spin_height)
+
         self.gb_props.setEnabled(False)
         v.addWidget(self.gb_props)
         v.addStretch()
@@ -528,6 +589,27 @@ class WorkPage(Page):
         obj = self.canvas.selected_object
         if obj and not isinstance(obj, Wall):
             obj.rotation = val
+            self.canvas.check_collisions()  # Rotatia poate cauza coliziuni
+            self.canvas.update()
+
+    def on_width_changed(self, val):
+        obj = self.canvas.selected_object
+        if obj:
+            if isinstance(obj, Wall):
+                pass
+            else:
+                obj.width = val
+                self.canvas.check_collisions()
+                self.canvas.update()
+
+    def on_height_changed(self, val):
+        obj = self.canvas.selected_object
+        if obj:
+            if isinstance(obj, Wall):
+                obj.thickness = val
+            else:
+                obj.height = val
+            self.canvas.check_collisions()
             self.canvas.update()
 
     def create_footer(self):
@@ -545,19 +627,45 @@ class WorkPage(Page):
         if obj:
             self.gb_props.setEnabled(True)
             self.spin_rot.blockSignals(True)
+            self.spin_width.blockSignals(True)
+            self.spin_height.blockSignals(True)
+
             if isinstance(obj, Wall):
                 self.lbl_name.setText("Perete")
                 self.spin_rot.setEnabled(False)
                 self.spin_rot.setValue(0)
+
+                self.spin_width.setEnabled(False)
+                self.spin_width.setValue(0)
+
+                self.spin_height.setEnabled(True)
+                self.spin_height.setValue(int(obj.thickness))
+
             elif isinstance(obj, Window):
                 self.lbl_name.setText("Fereastră")
                 self.spin_rot.setEnabled(True)
                 self.spin_rot.setValue(int(obj.rotation))
+
+                self.spin_width.setEnabled(True)
+                self.spin_width.setValue(int(obj.width))
+
+                self.spin_height.setEnabled(True)
+                self.spin_height.setValue(int(obj.height))
+
             else:
                 self.lbl_name.setText(getattr(obj, 'name', 'Obiect'))
                 self.spin_rot.setEnabled(True)
                 self.spin_rot.setValue(int(obj.rotation))
+
+                self.spin_width.setEnabled(True)
+                self.spin_width.setValue(int(obj.width))
+
+                self.spin_height.setEnabled(True)
+                self.spin_height.setValue(int(obj.height))
+
             self.spin_rot.blockSignals(False)
+            self.spin_width.blockSignals(False)
+            self.spin_height.blockSignals(False)
         else:
             self.gb_props.setEnabled(False)
             self.lbl_name.setText("-")
@@ -582,5 +690,6 @@ class WorkPage(Page):
             objs = self.pm.load_project(fname)
             if objs is not None:
                 self.canvas.objects = objs
+                self.canvas.check_collisions()
                 self.canvas.update()
                 QMessageBox.information(self, "Succes", "Incarcat cu succes!")
