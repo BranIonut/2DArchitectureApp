@@ -520,6 +520,79 @@ class SimpleCanvas(QWidget):
         self.project_changed_signal.emit()
         self.update()
 
+    def load_layout_template(self, template_type):
+        self.objects.clear()
+
+        if template_type == "APARTAMENT_STUDIO":
+            L, T = 80, 80
+            R, B = 1140, 800
+
+            self.objects.append(Wall(L, T, R, T))
+            self.objects.append(Wall(R, T, R, B))
+            self.objects.append(Wall(R, B, L, B))
+            self.objects.append(Wall(L, B, L, T))
+
+            hx1 = R - 220
+            hy1 = B - 260
+            self.objects.append(Wall(hx1, hy1, R, hy1))
+            self.objects.append(Wall(hx1, hy1, hx1, B))
+
+            bx1 = hx1
+            by1 = hy1
+            bx2 = R
+            by2 = hy1 + 220
+            self.objects.append(Wall(bx1, by2, bx2, by2))
+
+            kx2 = L + 360
+            ky1 = T + 260
+            self.objects.append(Wall(L, ky1, kx2, ky1))
+
+            nx1 = hx1 - 200
+            ny1 = B - 260
+            self.objects.append(Wall(nx1, ny1, hx1, ny1))
+            self.objects.append(Wall(nx1, ny1, nx1, B))
+
+        elif template_type == "APARTAMENT_2_CAMERE":
+            L, T = 60, 60
+            R, B = 1240, 900
+
+            self.objects.append(Wall(L, T, R, T))
+            self.objects.append(Wall(R, T, R, B))
+            self.objects.append(Wall(R, B, L, B))
+            self.objects.append(Wall(L, B, L, T))
+
+            hall_w = 180
+            hx = R - hall_w
+            self.objects.append(Wall(hx, T + 120, hx, B - 120))
+
+            by1 = T + 320
+            by2 = by1 + 220
+            self.objects.append(Wall(hx, by1, R, by1))
+            self.objects.append(Wall(hx, by2, R, by2))
+
+            kx2 = L + 380
+            ky = B - 320
+            self.objects.append(Wall(kx2, ky, kx2, B))
+            self.objects.append(Wall(L, ky, kx2, ky))
+
+            self.objects.append(Wall(hx, B - 340, R, B - 340))
+
+            dx = L + 520
+            dy = T + 420
+            self.objects.append(Wall(L, dy, dx, dy))
+            self.objects.append(Wall(dx, T, dx, dy))
+
+            self.objects.append(Wall(kx2, ky, hx - 120, ky))
+
+        else:
+            self.status_message_signal.emit(f"Template necunoscut: {template_type}")
+            return
+
+        self.select_object(None)
+        self.check_collisions()
+        self.project_changed_signal.emit()
+        self.update()
+        self.status_message_signal.emit(f"Șablon {template_type} încărcat.")
 
 class WorkPage(Page):
     def init_ui(self):
@@ -568,6 +641,11 @@ class WorkPage(Page):
         h.addWidget(QLabel("<b>Architect App</b>"))
         h.addStretch()
 
+        btn_export = QPushButton("🖼️ Export Foto")
+        btn_export.setStyleSheet("border:none; background:#27AE60; padding:5px 10px; border-radius:3px; font-weight:bold;")
+        btn_export.clicked.connect(self.export_as_image)
+        h.addWidget(btn_export)
+
         btn_save = QPushButton("💾 Salvează")
         btn_save.setStyleSheet("border:none; background:#185E8A; padding:5px; border-radius:3px;")
         btn_save.clicked.connect(self.save_project)
@@ -614,6 +692,19 @@ class WorkPage(Page):
 
         list_struct = QListWidget()
         list_struct.setIconSize(QSize(32, 32))
+
+        list_templates = QListWidget()
+        list_templates.itemClicked.connect(self.on_template_clicked)
+
+        item_studio = QListWidgetItem("🏠 Garsonieră (Studio)")
+        item_studio.setData(Qt.UserRole, "APARTAMENT_STUDIO")
+        list_templates.addItem(item_studio)
+
+        item_2cam = QListWidgetItem("🏢 Apartament 2 Camere")
+        item_2cam.setData(Qt.UserRole, "APARTAMENT_2_CAMERE")
+        list_templates.addItem(item_2cam)
+
+        self.toolbox.addItem(list_templates, "Șabloane Apartament")
 
         item_wall = QListWidgetItem("Perete (Linie)")
         item_wall.setData(Qt.UserRole, "CMD_WALL")
@@ -931,3 +1022,32 @@ class WorkPage(Page):
                 QMessageBox.information(self, "Succes", "Incarcat cu succes!")
             else:
                 QMessageBox.warning(self, "Eroare", "Fisier invalid sau nu s-a putut incarca.")
+
+    def export_as_image(self):
+        fname, _ = QFileDialog.getSaveFileName(self, "Exportă Schița", "", "PNG Image (*.png);;JPEG Image (*.jpg)")
+
+        if fname:
+
+            rect = self.canvas.rect()
+
+            image = QPixmap(self.canvas.size())
+            image.fill(Qt.white)
+
+            painter = QPainter(image)
+            self.canvas.render(painter)
+            painter.end()
+
+            if image.save(fname):
+                QMessageBox.information(self, "Export Reușit", f"Schița a fost salvată în:\n{fname}")
+            else:
+                QMessageBox.warning(self, "Eroare", "Nu s-a putut genera imaginea.")
+
+    def on_template_clicked(self, item):
+        template_id = item.data(Qt.UserRole)
+        reply = QMessageBox.question(
+            self, 'Atenție!',
+            "Încărcarea unui șablon va șterge tot ce ai desenat până acum. Continui?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.canvas.load_layout_template(template_id)
