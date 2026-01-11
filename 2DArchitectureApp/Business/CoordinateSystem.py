@@ -8,11 +8,29 @@ class CoordinateSystem:
         conversii unitati (pixeli <-> metri) si calcule geometrice vectoriale.
         """
 
-    def __init__(self, grid_size: int = 10, scale: float = 1.0):
+    def __init__(self, grid_size: int = 20, scale: float = 1.0):
         self.grid_size = grid_size
         self.scale = scale
-        self.units_per_meter = 100
-        self.units_per_cm = 1
+        # Unitatea curenta de afisare ('m', 'cm', 'mm')
+        self.display_unit = 'm'
+
+    def set_display_unit(self, unit: str):
+        """ Seteaza unitatea de masura pentru afisare (m, cm, mm). """
+        if unit in ['m', 'cm', 'mm']:
+            self.display_unit = unit
+
+    def pixels_to_current_unit(self, pixels: float) -> float:
+        """ Converteste pixelii in valoarea numerica a unitatii curente. """
+        # Baza: 100px = 1m
+        meters = pixels / 100.0
+
+        if self.display_unit == 'm':
+            return meters
+        elif self.display_unit == 'cm':
+            return meters * 100.0
+        elif self.display_unit == 'mm':
+            return meters * 1000.0
+        return meters
 
     def pixels_to_real_units(self, pixels: float) -> float:
         """ Converteste pixelii de pe ecran in unitati reale bazate pe scara curenta. """
@@ -23,7 +41,6 @@ class CoordinateSystem:
         return (units * self.grid_size) / self.scale
 
     def snap_to_grid(self, x: float, y: float) -> Tuple[float, float]:
-        """ Rotunjeste coordonatele la cel mai apropiat punct al grilei. """
         snapped_x = round(x / self.grid_size) * self.grid_size
         snapped_y = round(y / self.grid_size) * self.grid_size
         return snapped_x, snapped_y
@@ -104,6 +121,11 @@ class CoordinateSystem:
             return f"{meters:.2f} m"
         else:
             return f"{distance_cm:.1f} cm"
+
+    def format_length(self, pixels: float) -> str:
+        """ Returneaza un string formatat cu unitatea curenta (ex: '2.50 m'). """
+        val = self.pixels_to_current_unit(pixels)
+        return f"{val:.2f} {self.display_unit}"
 
     def set_grid_size(self, size: int):
         if size <= 0:

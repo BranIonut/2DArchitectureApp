@@ -45,6 +45,11 @@ except ImportError:
         MoveObjectCommand, MoveWallCommand, RotateObjectCommand, ResizeObjectCommand
     )
 
+try:
+    from Business.CoordinateSystem import CoordinateSystem
+except ImportError:
+    from CoordinateSystem import CoordinateSystem
+
 class SimpleCanvas(QWidget):
     """
         Componenta grafica principala (View/Widget) responsabila pentru desenarea
@@ -131,6 +136,8 @@ class SimpleCanvas(QWidget):
         self.snap_to_grid = True
         self.grid_size = 20
         self.handle_size = 10
+
+        self.coords = CoordinateSystem(grid_size=20)
 
         # Setari Widget
         self.setMinimumSize(600, 400)
@@ -227,8 +234,8 @@ class SimpleCanvas(QWidget):
         painter.drawLine(QPointF(ex - 5, ey + 5), QPointF(ex + 5, ey - 5))
 
         # Calcul distanta euclidiana
-        dx = ex - sx
-        dy = ey - sy
+        dx = self.ruler_end.x() - self.ruler_start.x()
+        dy = self.ruler_end.y() - self.ruler_start.y()
         dist_px = math.sqrt(dx ** 2 + dy ** 2)
         dist_m = dist_px / 100.0 # Conversie: 100px = 1 metru
 
@@ -236,7 +243,7 @@ class SimpleCanvas(QWidget):
         mid_x = (sx + ex) / 2
         mid_y = (sy + ey) / 2
 
-        text = f"{dist_m:.2f} m"
+        text = self.coords.format_length(dist_px)
         font = QFont("Arial", 10)
         font.setBold(True)
         painter.setFont(font)
@@ -498,6 +505,7 @@ class SimpleCanvas(QWidget):
         dx = wall.x2 - wall.x1
         dy = wall.y2 - wall.y1
         length_px = math.sqrt(dx ** 2 + dy ** 2)
+        text = self.coords.format_length(length_px)
         length_m = length_px / 100.0
 
         mid_x = (wall.x1 + wall.x2) / 2
@@ -506,10 +514,8 @@ class SimpleCanvas(QWidget):
         painter.translate(mid_x, mid_y)
 
         angle_deg = math.degrees(math.atan2(dy, dx))
-
         if 90 < abs(angle_deg) <= 270:
             angle_deg += 180
-
         painter.rotate(angle_deg)
 
         text = f"{length_m:.2f} m"

@@ -5,7 +5,7 @@ import sys
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGroupBox,
     QMessageBox, QFileDialog, QSpinBox, QCheckBox, QShortcut, QToolBox,
-    QListWidget, QListWidgetItem, QAbstractItemView
+    QListWidget, QListWidgetItem, QAbstractItemView, QComboBox
 )
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence, QIcon, QPixmap, QFont
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QSize, QRectF, QMarginsF, QLineF
@@ -151,6 +151,7 @@ class WorkPage(Page):
 
         gb_view = QGroupBox("Vizualizare")
         v_view = QVBoxLayout(gb_view)
+
         self.chk_grid = QCheckBox("Arată Grila")
         self.chk_grid.setChecked(True)
         self.chk_grid.toggled.connect(lambda val: setattr(self.canvas, 'grid_visible', val) or self.canvas.update())
@@ -160,6 +161,13 @@ class WorkPage(Page):
         self.chk_snap.setChecked(True)
         self.chk_snap.toggled.connect(lambda val: setattr(self.canvas, 'snap_to_grid', val))
         v_view.addWidget(self.chk_snap)
+
+        # Selector Unitati
+        v_view.addWidget(QLabel("Unitati:"))
+        self.combo_units = QComboBox()
+        self.combo_units.addItems(["Metri (m)", "Centimetri (cm)", "Milimetri (mm)"])
+        self.combo_units.currentIndexChanged.connect(self.on_unit_changed)
+        v_view.addWidget(self.combo_units)
 
         v.addWidget(gb_view)
 
@@ -217,6 +225,17 @@ class WorkPage(Page):
         v.addWidget(btn_clear)
 
         return w
+
+    def on_unit_changed(self, index):
+        """ Schimba unitatea de masura in sistemul de coordonate al canvas-ului. """
+        unit_map = {0: 'm', 1: 'cm', 2: 'mm'}
+        selected_unit = unit_map.get(index, 'm')
+
+        self.canvas.coords.set_display_unit(selected_unit)
+
+        self.canvas.update()
+
+        self.canvas.status_message_signal.emit(f"Unitate schimbata in: {selected_unit}")
 
     def load_assets_structured(self):
         current_dir = os.path.dirname(os.path.abspath(__file__))
