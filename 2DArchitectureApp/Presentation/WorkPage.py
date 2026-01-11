@@ -8,7 +8,9 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QAbstractItemView
 )
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QKeySequence, QIcon, QPixmap, QFont
-from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QSize, QRectF, QMarginsF
+from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QSize, QRectF, QMarginsF, QLineF
+
+from .TutorialDialog import TutorialDialog
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
@@ -24,575 +26,14 @@ try:
 except ImportError:
     from ProjectManager import ProjectManager
     from ArchitecturalObjects import SvgFurnitureObject, Wall, Window
+
     try:
         from ArchitecturalObjects import RoomFloor
     except Exception:
         RoomFloor = None
     from CollisionDetector import CollisionDetector
 
-
-class SimpleCanvas(QWidget):
-    mouse_moved_signal = pyqtSignal(int, int)
-    project_changed_signal = pyqtSignal()
-    status_message_signal = pyqtSignal(str)
-    object_selected_signal = pyqtSignal(object)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pm = ProjectManager()
-        self.objects = []
-        self.offset_x = 0
-        self.offset_y = 0
-        self.zoom_scale = 1.0
-        self.current_tool_mode = None
-        self.current_svg_path = None
-        self.selected_object = None
-
-        self.is_panning = False
-        self.last_pan_x = 0
-        self.last_pan_y = 0
-
-        self.is_drawing_wall = False
-        self.wall_start_pt = None
-        self.wall_temp_end = None
-
-        self.is_drawing_floor = False
-        self.floor_start_pt = None
-        self.floor_temp_rect = None
-
-        self.is_moving = False
-        self.is_rotating = False
-        self.drag_start_pos = QPointF()
-        self.obj_start_pos = QPointF()
-        self.wall_coords_start = None
-        self.rotate_start_angle = 0
-        self.initial_rotation = 0
-
-        self.grid_visible = True
-        self.snap_to_grid = True
-        self.grid_size = 20
-
-        self.setMinimumSize(600, 400)
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.StrongFocus)
-        self.setStyleSheet("background-color: white;")
-
-    def paintEvent(self, e):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillRect(self.rect(), Qt.white)
-        painter.translate(self.offset_x, self.offset_y)
-        painter.scale(self.zoom_scale, self.zoom_scale)
-
-        if self.grid_visible:
-            self.draw_grid(painter)
-
-        if RoomFloor is not None:
-            for obj in self.objects:
-                if isinstance(obj, RoomFloor):
-                    self.draw_room_floor(painter, obj)
-
-            if self.is_drawing_floor and self.floor_temp_rect:
-                painter.save()
-                painter.setBrush(QBrush(QColor(100, 200, 100, 100)))
-                painter.setPen(QPen(Qt.black, 1, Qt.DashLine))
-                painter.drawRect(self.floor_temp_rect)
-                painter.restore()
-
-        for obj in self.objects:
-            if isinstance(obj, Wall):
-                self.draw_wall(painter, obj)
-
-        for obj in self.objects:
-            if isinstance(obj, Window):
-                self.draw_window(painter, obj)
-            elif isinstance(obj, SvgFurnitureObject):
-                obj.draw(painter)
-
-        if self.is_drawing_wall and self.wall_start_pt and self.wall_temp_end:
-            pen = QPen(QColor(80, 80, 80), 8)
-            pen.setStyle(Qt.DashLine)
-            painter.setPen(pen)
-            painter.drawLine(self.wall_start_pt, self.wall_temp_end)
-
-    def draw_grid(self, painter):
-        pen = QPen(QColor(240, 240, 240))
-        pen.setWidth(1)
-        painter.setPen(pen)
-        start, end, step = -3000, 6000, self.grid_size
-        for x in range(start, end, step):
-            painter.drawLine(x, start, x, end)
-        for y in range(start, end, step):
-            painter.drawLine(start, y, end, y)
-
-    def draw_room_floor(self, painter, floor):
-        rect = floor.rect
-        base_color = getattr(floor, "color", QColor(100, 200, 100, 120))
-        if getattr(floor, "is_selected", False):
-            base_color = QColor(255, 200, 200, 150)
-
-        painter.save()
-        painter.setBrush(QBrush(base_color))
-        painter.setPen(Qt.NoPen)
-        painter.drawRect(rect)
-
-        area_m2 = getattr(floor, "area_m2", None)
-        if area_m2 is not None:
-            painter.setPen(QPen(Qt.black))
-            f = QFont("Arial", 10)
-            f.setBold(True)
-            painter.setFont(f)
-            painter.drawText(rect, Qt.AlignCenter, f"{area_m2} m²")
-        painter.restore()
-
-    def draw_wall(self, painter, wall):
-        color = QColor(64, 64, 64)
-        if wall.is_colliding:
-            color = QColor(255, 69, 0)
-        elif wall.is_selected:
-            color = Qt.red
-
-        pen = QPen(color, wall.thickness)
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.drawLine(int(wall.x1), int(wall.y1), int(wall.x2), int(wall.y2))
-
-    def draw_window(self, painter, win):
-        painter.save()
-        center = QPointF(win.x + win.width / 2, win.y + win.height / 2)
-        painter.translate(center)
-        painter.rotate(win.rotation)
-        painter.translate(-center)
-        rect = QRectF(win.x, win.y, win.width, win.height)
-
-        painter.setBrush(QBrush(QColor(173, 216, 230, 200)))
-
-        if win.is_colliding:
-            painter.setPen(QPen(QColor(255, 69, 0), 3))
-        else:
-            painter.setPen(QPen(Qt.red if win.is_selected else Qt.blue, 2))
-
-        painter.drawRect(rect)
-        painter.drawLine(QPointF(win.x, win.y + win.height / 2),
-                         QPointF(win.x + win.width, win.y + win.height / 2))
-        painter.restore()
-
-    def check_collisions(self):
-        for obj in self.objects:
-            obj.is_colliding = False
-
-        count = len(self.objects)
-        for i in range(count):
-            obj1 = self.objects[i]
-
-            if RoomFloor is not None and isinstance(obj1, RoomFloor):
-                continue
-
-            rect1 = obj1.rect
-
-            for j in range(i + 1, count):
-                obj2 = self.objects[j]
-
-                if RoomFloor is not None and isinstance(obj2, RoomFloor):
-                    continue
-
-                rect2 = obj2.rect
-                intersection = rect1.intersected(rect2)
-
-                if intersection.isEmpty():
-                    continue
-
-                is_wall1 = isinstance(obj1, Wall)
-                is_wall2 = isinstance(obj2, Wall)
-                is_win1 = isinstance(obj1, Window)
-                is_win2 = isinstance(obj2, Window)
-                is_svg1 = isinstance(obj1, SvgFurnitureObject)
-                is_svg2 = isinstance(obj2, SvgFurnitureObject)
-
-                is_attach1 = getattr(obj1, 'is_wall_attachment', False)
-                is_attach2 = getattr(obj2, 'is_wall_attachment', False)
-
-                if is_wall1 and is_wall2:
-                    continue
-
-                if (is_wall1 and is_attach1) or (is_wall2 and is_attach2) or \
-                        (is_wall1 and is_attach2) or (is_wall2 and is_attach1):
-                    continue
-
-                if (is_win1 and is_svg2) or (is_win2 and is_svg1):
-                    win_obj = obj1 if is_win1 else obj2
-                    win_thickness = min(win_obj.rect.width(), win_obj.rect.height())
-                    overlap_depth = min(intersection.width(), intersection.height())
-
-                    if overlap_depth <= (win_thickness / 2 + 1):
-                        continue
-
-                if (is_wall1 and not is_attach2) or (is_wall2 and not is_attach1):
-                    overlap_depth = min(intersection.width(), intersection.height())
-                    if overlap_depth <= 6.0:
-                        continue
-                    else:
-                        obj1.is_colliding = True
-                        obj2.is_colliding = True
-                        continue
-
-                overlap_depth = min(intersection.width(), intersection.height())
-                if overlap_depth > 1.0:
-                    obj1.is_colliding = True
-                    obj2.is_colliding = True
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MiddleButton:
-            self.is_panning = True
-            self.last_pan_x, self.last_pan_y = e.x(), e.y()
-            self.setCursor(Qt.ClosedHandCursor)
-            return
-
-        wx = (e.x() - self.offset_x) / self.zoom_scale
-        wy = (e.y() - self.offset_y) / self.zoom_scale
-        if self.snap_to_grid:
-            wx = round(wx / self.grid_size) * self.grid_size
-            wy = round(wy / self.grid_size) * self.grid_size
-        pos_pt = QPointF(wx, wy)
-
-        if e.button() == Qt.RightButton and self.selected_object:
-            if not isinstance(self.selected_object, Wall):
-                self.is_rotating = True
-                rect = self.selected_object.rect
-                self.rotate_start_angle = self._angle_to_mouse(rect.center().x(), rect.center().y(), wx, wy)
-                self.initial_rotation = self.selected_object.rotation
-                return
-
-        if e.button() == Qt.LeftButton:
-            if self.current_tool_mode == "wall":
-                self.is_drawing_wall = True
-                self.wall_start_pt = pos_pt
-                self.wall_temp_end = pos_pt
-                return
-
-            if self.current_tool_mode == "floor":
-                if RoomFloor is None:
-                    self.status_message_signal.emit("RoomFloor nu este disponibil (import esuat).")
-                    self.current_tool_mode = None
-                    self.setCursor(Qt.ArrowCursor)
-                    return
-                self.is_drawing_floor = True
-                self.floor_start_pt = pos_pt
-                self.floor_temp_rect = QRectF(pos_pt.x(), pos_pt.y(), 0, 0)
-                return
-
-            if self.current_tool_mode in ["window", "svg_placement"]:
-                self.place_object_at(wx, wy)
-                return
-
-            clicked_obj = None
-            for obj in reversed(self.objects):
-                if isinstance(obj, Wall):
-                    if self.dist_to_segment(pos_pt, obj) < obj.thickness / 2 + 5:
-                        clicked_obj = obj
-                        break
-                elif RoomFloor is not None and isinstance(obj, RoomFloor):
-                    if obj.rect.contains(pos_pt):
-                        clicked_obj = obj
-                        break
-                elif isinstance(obj, (Window, SvgFurnitureObject)):
-                    if obj.rect.contains(pos_pt):
-                        clicked_obj = obj
-                        break
-
-            self.select_object(clicked_obj)
-
-            if clicked_obj:
-                self.is_moving = True
-                self.drag_start_pos = pos_pt
-
-                if isinstance(clicked_obj, Wall):
-                    self.wall_coords_start = (clicked_obj.x1, clicked_obj.y1, clicked_obj.x2, clicked_obj.y2)
-                else:
-                    self.obj_start_pos = QPointF(clicked_obj.x, clicked_obj.y)
-
-            self.update()
-
-    def mouseMoveEvent(self, e):
-        wx = (e.x() - self.offset_x) / self.zoom_scale
-        wy = (e.y() - self.offset_y) / self.zoom_scale
-        self.mouse_moved_signal.emit(int(wx), int(wy))
-
-        if self.is_panning:
-            self.offset_x += e.x() - self.last_pan_x
-            self.offset_y += e.y() - self.last_pan_y
-            self.last_pan_x, self.last_pan_y = e.x(), e.y()
-            self.update()
-            return
-
-        if self.snap_to_grid:
-            wx = round(wx / self.grid_size) * self.grid_size
-            wy = round(wy / self.grid_size) * self.grid_size
-
-        if self.is_drawing_wall:
-            self.wall_temp_end = QPointF(wx, wy)
-            self.update()
-            return
-
-        if self.is_drawing_floor and self.floor_start_pt:
-            x = min(self.floor_start_pt.x(), wx)
-            y = min(self.floor_start_pt.y(), wy)
-            w = abs(wx - self.floor_start_pt.x())
-            h = abs(wy - self.floor_start_pt.y())
-            self.floor_temp_rect = QRectF(x, y, w, h)
-            self.update()
-            return
-
-        if self.is_moving and self.selected_object:
-            dx = wx - self.drag_start_pos.x()
-            dy = wy - self.drag_start_pos.y()
-
-            if isinstance(self.selected_object, Wall):
-                ox1, oy1, ox2, oy2 = self.wall_coords_start
-                self.selected_object.x1 = ox1 + dx
-                self.selected_object.y1 = oy1 + dy
-                self.selected_object.x2 = ox2 + dx
-                self.selected_object.y2 = oy2 + dy
-            else:
-                self.selected_object.x = self.obj_start_pos.x() + dx
-                self.selected_object.y = self.obj_start_pos.y() + dy
-
-            self.check_collisions()
-            self.object_selected_signal.emit(self.selected_object)
-            self.update()
-            return
-
-        if self.is_rotating and self.selected_object:
-            rect = self.selected_object.rect
-            curr_angle = self._angle_to_mouse(rect.center().x(), rect.center().y(), wx, wy)
-            self.selected_object.rotation = (self.initial_rotation + curr_angle - self.rotate_start_angle) % 360
-            self.check_collisions()
-            self.object_selected_signal.emit(self.selected_object)
-            self.update()
-
-    def mouseReleaseEvent(self, e):
-        if self.is_drawing_wall and self.current_tool_mode == "wall":
-            self.is_drawing_wall = False
-            if self.wall_start_pt != self.wall_temp_end:
-                new_wall = Wall(self.wall_start_pt.x(), self.wall_start_pt.y(),
-                                self.wall_temp_end.x(), self.wall_temp_end.y())
-                self.objects.append(new_wall)
-                self.select_object(new_wall)
-                self.check_collisions()
-                self.project_changed_signal.emit()
-            self.update()
-
-        if self.is_drawing_floor and self.current_tool_mode == "floor":
-            self.is_drawing_floor = False
-            if RoomFloor is not None and self.floor_temp_rect and self.floor_temp_rect.width() > 0 and self.floor_temp_rect.height() > 0:
-                try:
-                    new_floor = RoomFloor(
-                        self.floor_temp_rect.x(),
-                        self.floor_temp_rect.y(),
-                        self.floor_temp_rect.width(),
-                        self.floor_temp_rect.height(),
-                    )
-                except TypeError:
-                    new_floor = None
-
-                if new_floor is not None:
-                    self.objects.insert(0, new_floor)
-                    self.select_object(new_floor)
-                    self.project_changed_signal.emit()
-
-            self.floor_start_pt = None
-            self.floor_temp_rect = None
-            self.current_tool_mode = None
-            self.setCursor(Qt.ArrowCursor)
-            self.update()
-
-        if e.button() == Qt.MiddleButton:
-            self.is_panning = False
-            self.setCursor(Qt.ArrowCursor)
-
-        self.is_moving = False
-        self.is_rotating = False
-
-    def wheelEvent(self, e):
-        if e.modifiers() & Qt.ControlModifier:
-            old_wx = (e.x() - self.offset_x) / self.zoom_scale
-            old_wy = (e.y() - self.offset_y) / self.zoom_scale
-            factor = 1.1 if e.angleDelta().y() > 0 else 0.9
-            self.zoom_scale = max(0.1, min(5.0, self.zoom_scale * factor))
-            self.offset_x = e.x() - old_wx * self.zoom_scale
-            self.offset_y = e.y() - old_wy * self.zoom_scale
-            self.status_message_signal.emit(f"Zoom: {int(self.zoom_scale * 100)}%")
-            self.update()
-        else:
-            super().wheelEvent(e)
-
-    def set_tool_wall(self):
-        self.current_tool_mode = "wall"
-        self.select_object(None)
-        self.setCursor(Qt.CrossCursor)
-        self.status_message_signal.emit("Unealta Perete: Click si trage.")
-
-    def set_tool_window(self):
-        self.current_tool_mode = "window"
-        self.select_object(None)
-        self.setCursor(Qt.CrossCursor)
-        self.status_message_signal.emit("Unealta Fereastră: Click pentru a plasa.")
-
-    def set_tool_svg(self, path):
-        self.current_tool_mode = "svg_placement"
-        self.current_svg_path = path
-        self.select_object(None)
-        self.setCursor(Qt.CrossCursor)
-        self.status_message_signal.emit("Unealta Mobilier: Click pentru a plasa.")
-
-    def set_tool_floor(self):
-        if RoomFloor is None:
-            self.status_message_signal.emit("RoomFloor nu exista in proiect (import esuat).")
-            self.current_tool_mode = None
-            self.setCursor(Qt.ArrowCursor)
-            return
-        self.current_tool_mode = "floor"
-        self.select_object(None)
-        self.setCursor(Qt.CrossCursor)
-        self.status_message_signal.emit("Suprafata: Click si TRAGE (diagonala) pentru a desena.")
-
-    def place_object_at(self, x, y):
-        new_obj = None
-        if self.current_tool_mode == "window":
-            new_obj = Window(x - 50, y - 7, 100, 15)
-        elif self.current_tool_mode == "svg_placement" and self.current_svg_path:
-            new_obj = SvgFurnitureObject(self.current_svg_path, x=x, y=y)
-            new_obj.move_to(QPointF(x, y))
-
-        if new_obj:
-            self.objects.append(new_obj)
-            self.select_object(new_obj)
-            self.check_collisions()
-            self.project_changed_signal.emit()
-            if self.current_tool_mode == "svg_placement":
-                self.current_tool_mode = None
-                self.setCursor(Qt.ArrowCursor)
-            self.update()
-
-    def select_object(self, obj):
-        for o in self.objects:
-            o.is_selected = False
-        self.selected_object = obj
-        if obj:
-            obj.is_selected = True
-        self.object_selected_signal.emit(obj)
-        self.update()
-
-    def dist_to_segment(self, p, wall):
-        x, y = p.x(), p.y()
-        x1, y1, x2, y2 = wall.x1, wall.y1, wall.x2, wall.y2
-        A = x - x1
-        B = y - y1
-        C = x2 - x1
-        D = y2 - y1
-        dot = A * C + B * D
-        len_sq = C * C + D * D
-        param = -1
-        if len_sq != 0:
-            param = dot / len_sq
-        if param < 0:
-            xx, yy = x1, y1
-        elif param > 1:
-            xx, yy = x2, y2
-        else:
-            xx, yy = x1 + param * C, y1 + param * D
-        return math.sqrt((x - xx) ** 2 + (y - yy) ** 2)
-
-    def _angle_to_mouse(self, cx, cy, mx, my):
-        return math.degrees(math.atan2(my - cy, mx - cx))
-
-    def delete_selection(self):
-        if self.selected_object and self.selected_object in self.objects:
-            self.objects.remove(self.selected_object)
-            self.select_object(None)
-            self.check_collisions()
-            self.project_changed_signal.emit()
-            self.update()
-
-    def clear_scene(self):
-        self.objects.clear()
-        self.select_object(None)
-        self.project_changed_signal.emit()
-        self.update()
-
-    def load_layout_template(self, template_type):
-        self.objects.clear()
-
-        if template_type == "APARTAMENT_STUDIO":
-            L, T = 80, 80
-            R, B = 1140, 800
-
-            self.objects.append(Wall(L, T, R, T))
-            self.objects.append(Wall(R, T, R, B))
-            self.objects.append(Wall(R, B, L, B))
-            self.objects.append(Wall(L, B, L, T))
-
-            hx1 = R - 220
-            hy1 = B - 260
-            self.objects.append(Wall(hx1, hy1, R, hy1))
-            self.objects.append(Wall(hx1, hy1, hx1, B))
-
-            bx1 = hx1
-            by1 = hy1
-            bx2 = R
-            by2 = hy1 + 220
-            self.objects.append(Wall(bx1, by2, bx2, by2))
-
-            kx2 = L + 360
-            ky1 = T + 260
-            self.objects.append(Wall(L, ky1, kx2, ky1))
-
-            nx1 = hx1 - 200
-            ny1 = B - 260
-            self.objects.append(Wall(nx1, ny1, hx1, ny1))
-            self.objects.append(Wall(nx1, ny1, nx1, B))
-
-        elif template_type == "APARTAMENT_2_CAMERE":
-            L, T = 60, 60
-            R, B = 1240, 900
-
-            self.objects.append(Wall(L, T, R, T))
-            self.objects.append(Wall(R, T, R, B))
-            self.objects.append(Wall(R, B, L, B))
-            self.objects.append(Wall(L, B, L, T))
-
-            hall_w = 180
-            hx = R - hall_w
-            self.objects.append(Wall(hx, T + 120, hx, B - 120))
-
-            by1 = T + 320
-            by2 = by1 + 220
-            self.objects.append(Wall(hx, by1, R, by1))
-            self.objects.append(Wall(hx, by2, R, by2))
-
-            kx2 = L + 380
-            ky = B - 320
-            self.objects.append(Wall(kx2, ky, kx2, B))
-            self.objects.append(Wall(L, ky, kx2, ky))
-
-            self.objects.append(Wall(hx, B - 340, R, B - 340))
-
-            dx = L + 520
-            dy = T + 420
-            self.objects.append(Wall(L, dy, dx, dy))
-            self.objects.append(Wall(dx, T, dx, dy))
-
-            self.objects.append(Wall(kx2, ky, hx - 120, ky))
-
-        else:
-            self.status_message_signal.emit(f"Template necunoscut: {template_type}")
-            return
-
-        self.select_object(None)
-        self.check_collisions()
-        self.project_changed_signal.emit()
-        self.update()
-        self.status_message_signal.emit(f"Șablon {template_type} încărcat.")
+from .SimpleCanvas import SimpleCanvas
 
 class WorkPage(Page):
     def init_ui(self):
@@ -641,8 +82,15 @@ class WorkPage(Page):
         h.addWidget(QLabel("<b>Architect App</b>"))
         h.addStretch()
 
+        btn_help = QPushButton("? Ajutor")
+        btn_help.setStyleSheet(
+            "border:none; background:#E67E22; padding:5px 10px; border-radius:3px; font-weight:bold;")
+        btn_help.clicked.connect(self.show_tutorial)
+        h.addWidget(btn_help)
+
         btn_export = QPushButton("🖼️ Export Foto")
-        btn_export.setStyleSheet("border:none; background:#27AE60; padding:5px 10px; border-radius:3px; font-weight:bold;")
+        btn_export.setStyleSheet(
+            "border:none; background:#27AE60; padding:5px 10px; border-radius:3px; font-weight:bold;")
         btn_export.clicked.connect(self.export_as_image)
         h.addWidget(btn_export)
 
@@ -692,6 +140,10 @@ class WorkPage(Page):
 
         list_struct = QListWidget()
         list_struct.setIconSize(QSize(32, 32))
+
+        item_ruler = QListWidgetItem("Rigla (Masurare)")
+        item_ruler.setData(Qt.UserRole, "CMD_RULER")
+        list_struct.addItem(item_ruler)
 
         list_templates = QListWidget()
         list_templates.itemClicked.connect(self.on_template_clicked)
@@ -796,6 +248,8 @@ class WorkPage(Page):
             self.canvas.set_tool_window()
         elif data == "CMD_FLOOR":
             self.canvas.set_tool_floor()
+        elif data == "CMD_RULER":
+            self.canvas.set_tool_ruler()
         elif data:
             self.canvas.set_tool_svg(data)
 
@@ -1024,23 +478,25 @@ class WorkPage(Page):
                 QMessageBox.warning(self, "Eroare", "Fisier invalid sau nu s-a putut incarca.")
 
     def export_as_image(self):
-        fname, _ = QFileDialog.getSaveFileName(self, "Exportă Schița", "", "PNG Image (*.png);;JPEG Image (*.jpg)")
+        fname, filter_selected = QFileDialog.getSaveFileName(
+            self, "Exportă Schița", "proiect_casa", "PNG Image (*.png);;JPEG Image (*.jpg)"
+        )
 
-        if fname:
+        if not fname:
+            return
 
-            rect = self.canvas.rect()
+        if not fname.lower().endswith(('.png', '.jpg', '.jpeg')):
+            if "png" in filter_selected.lower():
+                fname += ".png"
+            elif "jpg" in filter_selected.lower():
+                fname += ".jpg"
 
-            image = QPixmap(self.canvas.size())
-            image.fill(Qt.white)
+        success = self.canvas.save_to_image(fname)
 
-            painter = QPainter(image)
-            self.canvas.render(painter)
-            painter.end()
-
-            if image.save(fname):
-                QMessageBox.information(self, "Export Reușit", f"Schița a fost salvată în:\n{fname}")
-            else:
-                QMessageBox.warning(self, "Eroare", "Nu s-a putut genera imaginea.")
+        if success:
+            QMessageBox.information(self, "Export Reușit", f"Imaginea a fost salvată în:\n{fname}")
+        else:
+            QMessageBox.warning(self, "Eroare", "Nu s-a putut salva imaginea. Verifică permisiunile sau calea aleasă.")
 
     def on_template_clicked(self, item):
         template_id = item.data(Qt.UserRole)
@@ -1051,3 +507,7 @@ class WorkPage(Page):
         )
         if reply == QMessageBox.Yes:
             self.canvas.load_layout_template(template_id)
+
+    def show_tutorial(self):
+        dlg = TutorialDialog(self)
+        dlg.exec_()
