@@ -64,7 +64,6 @@ Interfața e împărțită simplu: Unelte (stânga), Canvas (centru), Proprietă
 
 ## Screenshots
 
-*(Aici pui capturile de ecran din folderul resources)*
 
 * **Dashboard:** `./resources/screenshots/dashboard.png`
 * **Exemplu Plan:** `./resources/screenshots/plan_example.png`
