@@ -5,6 +5,10 @@ from PyQt5.QtGui import QFont
 
 
 class HelpPage(Page):
+    """
+        Pagina statica de ajutor.
+        Afiseaza instructiuni de baza folosind etichete text si HTML simplu.
+        """
 
     def init_ui(self):
         layout = QVBoxLayout()

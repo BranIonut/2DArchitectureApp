@@ -5,7 +5,16 @@ from PyQt5.QtGui import QPixmap, QPainter, QColor
 import math
 
 class RoomFloor:
+    """
+        Reprezinta o zona de podea (o camera) definita prin pozitie si dimensiuni.
+        Calculeaza automat aria in metri patrati.
+        """
     def __init__(self, x, y, width, height):
+        """
+                Args:
+                    x, y (float): Coordonatele coltului stanga-sus.
+                    width, height (float): Dimensiunile zonei.
+                """
         self.x = x
         self.y = y
         self.width = width
@@ -20,6 +29,10 @@ class RoomFloor:
 
     @property
     def rect(self):
+        """
+                Returneaza dreptunghiul normalizat (fara dimensiuni negative) pentru randare si coliziuni.
+                Returns: QRectF
+                """
         x = min(self.x, self.x + self.width)
         y = min(self.y, self.y + self.height)
         w = abs(self.width)
@@ -28,12 +41,17 @@ class RoomFloor:
 
     @property
     def area_m2(self):
+        """
+                Calculeaza aria suprafetei in metri patrati.
+                Factor de scalare: 0.025 (ajustabil in functie de scara gridului).
+                """
         SCALE_FACTOR = 0.025
         real_w = abs(self.width) * SCALE_FACTOR
         real_h = abs(self.height) * SCALE_FACTOR
         return round(real_w * real_h, 2)
 
     def to_dict(self):
+        """ Serializare pentru salvare in JSON. """
         return {
             "type": "room_floor",
             "x": self.x, "y": self.y,
@@ -42,9 +60,13 @@ class RoomFloor:
 
     @staticmethod
     def from_dict(data):
+        """ Deserializare din JSON. """
         return RoomFloor(data["x"], data["y"], data["width"], data["height"])
 
 class Wall:
+    """
+        Reprezinta un perete definit ca un segment de dreapta intre doua puncte (x1, y1) si (x2, y2).
+        """
     def __init__(self, x1, y1, x2, y2, thickness=10):
         self.x1 = x1
         self.y1 = y1
@@ -58,6 +80,10 @@ class Wall:
 
     @property
     def rect(self):
+        """
+                Calculeaza bounding box-ul peretelui pentru detectia coliziunilor.
+                Adauga o margine de siguranta (+10px) pentru a facilita selectia cu mouse-ul.
+                """
         min_x = min(self.x1, self.x2)
         min_y = min(self.y1, self.y2)
         w = abs(self.x2 - self.x1)
@@ -77,6 +103,10 @@ class Wall:
         return Wall(data["x1"], data["y1"], data["x2"], data["y2"], data.get("thickness", 10))
 
 class Window:
+    """
+        Reprezinta o fereastra care poate fi plasata pe pereti.
+        Suporta rotatie si detectie specifica a coliziunilor (is_wall_attachment).
+        """
     def __init__(self, x, y, width=100, height=15, rotation=0):
         self.x = x
         self.y = y
@@ -91,6 +121,10 @@ class Window:
 
     @property
     def rect(self):
+        """
+                Calculeaza bounding box-ul rotit al ferestrei.
+                Daca rotatia nu este multiplu de 90, se calculeaza proiectia axelor folosind trigonometrie.
+                """
         base_rect = QRectF(self.x, self.y, self.width, self.height)
 
         if self.rotation % 180 == 0:
@@ -122,9 +156,15 @@ class Window:
         return Window(data["x"], data["y"], data["width"], data["height"], data.get("rotation", 0))
 
 class SvgFurnitureObject:
+    """
+        Obiect generic de mobilier incarcat dintr-un fisier SVG sau imagine (PNG/JPG).
+        Gestioneaza randarea vectoriala sau rasterizata.
+        """
     def __init__(self, file_path, category="General", x=0, y=0, rotation=0, width=80, height=80):
         self.file_path = file_path
         self.rotation = rotation
+
+        # Extrage numele lizibil din numele fisierului
         path_str = str(file_path).lower().replace('\\', '/')
         filename = os.path.basename(file_path)
         self.name = os.path.splitext(filename)[0].replace('AdobeStock_', '').replace('_', ' ').title()
@@ -153,6 +193,10 @@ class SvgFurnitureObject:
         self._load_resource()
 
     def _load_resource(self):
+        """
+                Incarca continutul fisierului. Verifica header-ul pentru a distinge
+                intre imagini raster (PNG/JPG) si vectoriale (SVG).
+                """
         if not os.path.exists(self.file_path):
             return
         try:
@@ -178,6 +222,7 @@ class SvgFurnitureObject:
 
     @property
     def rect(self):
+        """ Returneaza bounding box-ul ajustat pentru rotatie. """
         base_rect = QRectF(self.x, self.y, self.width, self.height)
 
         if self.rotation % 180 == 0:
@@ -197,16 +242,23 @@ class SvgFurnitureObject:
         return QRectF(center.x() - new_w / 2, center.y() - new_h / 2, new_w, new_h)
 
     def move_to(self, pos):
+        """ Muta centrul obiectului la pozitia specificata. """
         self.x = pos.x() - self.width / 2
         self.y = pos.y() - self.height / 2
 
     def draw(self, painter):
+        """
+                Deseneaza obiectul pe canvas. Aplica transformari de rotatie si
+                deseneaza conturul de selectie/coliziune daca este cazul.
+                """
         if not self.is_valid:
             return
 
         painter.save()
         cx = self.x + self.width / 2
         cy = self.y + self.height / 2
+
+        # Aplicare rotatie in jurul centrului
         painter.translate(cx, cy)
         painter.rotate(self.rotation)
         painter.translate(-cx, -cy)
@@ -214,15 +266,17 @@ class SvgFurnitureObject:
         target = QRectF(self.x, self.y, self.width, self.height)
         painter.drawPixmap(target.toRect(), self.pixmap)
 
+        # Randare SVG sau Pixmap
         if self.renderer and self.renderer.isValid():
             self.renderer.render(painter, target)
         elif self.pixmap:
             painter.drawPixmap(target.toRect(), self.pixmap)
 
+        # Desenare chenar indicator (Selectie / Coliziune)
         if self.is_selected or self.is_colliding:
             pen = painter.pen()
             if self.is_colliding:
-                pen.setColor(QColor(255, 69, 0))
+                pen.setColor(QColor(255, 69, 0)) # Rosu-Portocaliu pentru coliziune
                 pen.setStyle(Qt.SolidLine)
                 pen.setWidth(3)
             else:

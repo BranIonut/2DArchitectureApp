@@ -4,6 +4,10 @@ from datetime import datetime
 
 
 class Project:
+    """
+        Modelul de date al unui proiect.
+        Contine metadate (nume, dimensiuni, data) si lista de obiecte grafice.
+        """
     def __init__(self, name="Proiect Nou", width=2000, height=2000):
         self.name = name
         self.width = width
@@ -11,19 +15,26 @@ class Project:
         self.created_date = datetime.now().isoformat()
         self.modified_date = datetime.now().isoformat()
 
-        # Setari
+        # Setari de mediu
         self.grid_size = 20
         self.grid_visible = True
         self.snap_to_grid = True
 
-        # Container de date
+        # Containerul principal pentru obiectele din scena
         self.objects = []
 
     def save(self, filepath, object_instances):
+        """
+                Serializeaza proiectul si obiectele in format JSON.
+
+                Args:
+                    filepath (str): Calea fisierului destinatie.
+                    object_instances (list): Lista de obiecte vii din aplicatie care trebuie salvate.
+                """
         try:
             self.modified_date = datetime.now().isoformat()
 
-            # Serializare: converteste instantele in dictionare
+            # Conversie obiecte -> dictionare
             serialized_objects = []
             for obj in object_instances:
                 if hasattr(obj, 'to_dict'):
@@ -50,6 +61,10 @@ class Project:
 
     @staticmethod
     def load(filepath):
+        """
+                Incarca datele brute dintr-un fisier JSON si returneaza o instanta Project.
+                Nu instantiaza obiectele grafice aici; doar incarca lista de dictionare.
+                """
         if not os.path.exists(filepath):
             return None
 

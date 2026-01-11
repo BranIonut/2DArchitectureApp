@@ -12,6 +12,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QSize, QRectF, QMarginsF, QLin
 
 from .TutorialDialog import TutorialDialog
 
+# Importuri Business Logic
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
 if root_dir not in sys.path:
@@ -36,7 +37,20 @@ except ImportError:
 from .SimpleCanvas import SimpleCanvas
 
 class WorkPage(Page):
+    """
+        Pagina principala de lucru a aplicatiei.
+
+        Rol: Actioneaza ca un Controller care integreaza:
+        - Canvas-ul de desenare (SimpleCanvas).
+        - Bara de instrumente din stanga (Toolbox).
+        - Panoul de proprietati din dreapta.
+        - Bara de meniu superioara.
+        """
     def init_ui(self):
+        """
+                Configureaza layout-ul principal si initializeaza componentele UI.
+                Seteaza conexiunile semnal-slot dintre componente.
+                """
         self.pm = ProjectManager()
         if not self.pm.current_project:
             self.pm.create_new_project("Proiect Hibrid")
@@ -45,6 +59,7 @@ class WorkPage(Page):
         main.setContentsMargins(0, 0, 0, 0)
         main.setSpacing(0)
 
+        # 1. Header
         main.addWidget(self.create_header())
 
         content = QHBoxLayout()
@@ -61,21 +76,25 @@ class WorkPage(Page):
         content.addWidget(canvas_container, 1)
 
         content.addWidget(self.create_right_panel())
-
         main.addLayout(content, 1)
+
+        # 3. Footer
         main.addWidget(self.create_footer())
 
+        # Conectare Semnale Canvas -> UI
         self.canvas.status_message_signal.connect(self.lbl_status.setText)
         self.canvas.project_changed_signal.connect(self.refresh_stats)
         self.canvas.object_selected_signal.connect(self.update_properties)
         self.canvas.mouse_moved_signal.connect(lambda x, y: None)
 
+        # Scurtaturi tastatura
         QShortcut(QKeySequence("Delete"), self).activated.connect(self.canvas.delete_selection)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self.action_cancel)
 
         self.refresh_stats()
 
     def create_header(self):
+        """ Creeaza bara superioara cu butoane de actiune globala. """
         w = QWidget()
         w.setStyleSheet("background-color: #03254C; color: white; padding: 5px;")
         h = QHBoxLayout(w)
@@ -112,6 +131,7 @@ class WorkPage(Page):
         return w
 
     def create_left_panel(self):
+        """ Creeaza panoul din stanga continand sabloane, unelte si biblioteca de obiecte. """
         w = QWidget()
         w.setFixedWidth(250)
         w.setStyleSheet("background-color: #F7F3E8;")
@@ -138,6 +158,7 @@ class WorkPage(Page):
             QListWidget { border: none; background: #F7F3E8; }
         """)
 
+        # Sectiune Structura
         list_struct = QListWidget()
         list_struct.setIconSize(QSize(32, 32))
 
@@ -145,6 +166,7 @@ class WorkPage(Page):
         item_ruler.setData(Qt.UserRole, "CMD_RULER")
         list_struct.addItem(item_ruler)
 
+        # Sectiune Sabloane
         list_templates = QListWidget()
         list_templates.itemClicked.connect(self.on_template_clicked)
 
@@ -173,6 +195,7 @@ class WorkPage(Page):
         list_struct.itemClicked.connect(self.on_menu_item_clicked)
         self.toolbox.addItem(list_struct, "Structură")
 
+        # Incarcare dinamica a resurselor SVG
         self.load_assets_structured()
 
         v.addWidget(self.toolbox)
@@ -212,6 +235,7 @@ class WorkPage(Page):
                 self.add_grid_category(folder_name.capitalize(), full_path)
 
     def add_grid_category(self, title, path):
+        """ Adauga o noua categorie in Toolbox cu iconite pentru fisierele din path. """
         list_w = QListWidget()
         list_w.setViewMode(QListWidget.IconMode)
         list_w.setResizeMode(QListWidget.Adjust)
@@ -241,6 +265,7 @@ class WorkPage(Page):
             print(f"Error loading category {title}: {e}")
 
     def on_menu_item_clicked(self, item):
+        """ Gestioneaza selectia unei unelte sau a unui obiect din Toolbox. """
         data = item.data(Qt.UserRole)
         if data == "CMD_WALL":
             self.canvas.set_tool_wall()
@@ -254,6 +279,7 @@ class WorkPage(Page):
             self.canvas.set_tool_svg(data)
 
     def create_right_panel(self):
+        """ Creeaza panoul din dreapta pentru unelte rapide si proprietati obiect. """
         w = QWidget()
         w.setFixedWidth(240)
         w.setStyleSheet("background-color: #FEFCF3; border-left: 1px solid #ccc;")
@@ -325,6 +351,7 @@ class WorkPage(Page):
         return w
 
     def on_rotation_changed(self, val):
+        """ Slot apelat la modificarea spinbox-ului de rotatie. """
         obj = self.canvas.selected_object
         if obj and not isinstance(obj, Wall):
             obj.rotation = val
@@ -332,6 +359,7 @@ class WorkPage(Page):
             self.canvas.update()
 
     def on_width_changed(self, val):
+        """ Slot apelat la modificarea spinbox-ului de latime. """
         obj = self.canvas.selected_object
         if obj:
             if isinstance(obj, Wall):
@@ -343,6 +371,7 @@ class WorkPage(Page):
                 self.refresh_stats()
 
     def on_height_changed(self, val):
+        """ Slot apelat la modificarea spinbox-ului de inaltime. """
         obj = self.canvas.selected_object
         if obj:
             if isinstance(obj, Wall):
@@ -354,6 +383,7 @@ class WorkPage(Page):
             self.refresh_stats()
 
     def create_footer(self):
+        """ Creeaza bara de status din josul paginii. """
         w = QWidget()
         w.setStyleSheet("background:#185E8A; color:white;")
         h = QHBoxLayout(w)
@@ -362,6 +392,7 @@ class WorkPage(Page):
         return w
 
     def refresh_stats(self):
+        """ Recalculeaza aria totala a camerelor din proiect. """
         total_m2 = 0.0
         if RoomFloor is not None:
             for obj in self.canvas.objects:
@@ -371,6 +402,7 @@ class WorkPage(Page):
             self.lbl_total_area.setText(f"Total Arie: {total_m2:.2f} m²")
 
     def update_properties(self, obj):
+        """ Actualizeaza panoul de proprietati cand un obiect este selectat. """
         if obj:
             self.gb_props.setEnabled(True)
             if hasattr(self, "btn_delete_obj"):
@@ -446,6 +478,7 @@ class WorkPage(Page):
         self.canvas.setCursor(Qt.ArrowCursor)
 
     def ask_clear_scene(self):
+        """ Afiseaza dialog de confirmare pentru stergerea intregului proiect. """
         reply = QMessageBox.question(
             self,
             "Confirmare Stergere",
@@ -457,6 +490,7 @@ class WorkPage(Page):
             self.canvas.clear_scene()
 
     def save_project(self):
+        """ Salveaza starea curenta in format JSON. """
         fname, _ = QFileDialog.getSaveFileName(self, "Salveaza", "", "JSON (*.json)")
         if fname:
             if self.pm.save_project(fname, self.canvas.objects):
@@ -465,6 +499,7 @@ class WorkPage(Page):
                 QMessageBox.warning(self, "Eroare", "Nu s-a putut salva.")
 
     def load_project(self):
+        """ Incarca un proiect dintr-un fisier JSON. """
         fname, _ = QFileDialog.getOpenFileName(self, "Deschide", "", "JSON (*.json)")
         if fname:
             objs = self.pm.load_project(fname)
@@ -478,6 +513,7 @@ class WorkPage(Page):
                 QMessageBox.warning(self, "Eroare", "Fisier invalid sau nu s-a putut incarca.")
 
     def export_as_image(self):
+        """ Exporta scena curenta ca imagine (PNG/JPG). """
         fname, filter_selected = QFileDialog.getSaveFileName(
             self, "Exportă Schița", "proiect_casa", "PNG Image (*.png);;JPEG Image (*.jpg)"
         )
@@ -499,6 +535,7 @@ class WorkPage(Page):
             QMessageBox.warning(self, "Eroare", "Nu s-a putut salva imaginea. Verifică permisiunile sau calea aleasă.")
 
     def on_template_clicked(self, item):
+        """ Incarca un sablon cand este selectat din lista. """
         template_id = item.data(Qt.UserRole)
         reply = QMessageBox.question(
             self, 'Atenție!',
@@ -509,5 +546,6 @@ class WorkPage(Page):
             self.canvas.load_layout_template(template_id)
 
     def show_tutorial(self):
+        """ Deschide fereastra de ajutor (TutorialDialog). """
         dlg = TutorialDialog(self)
         dlg.exec_()

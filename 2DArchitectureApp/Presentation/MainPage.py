@@ -4,6 +4,10 @@ from PyQt5.QtGui import QFont
 from .Page import Page
 
 class MainPage(Page):
+    """
+        Ecranul de pornire (Landing Page).
+        Ofera optiuni pentru a incepe lucrul sau pentru a vedea ajutorul.
+        """
     def init_ui(self):
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignCenter)

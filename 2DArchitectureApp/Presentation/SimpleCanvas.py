@@ -12,6 +12,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QSize, QRectF, QMarginsF, QLin
 
 from .TutorialDialog import TutorialDialog
 
+# Importuri conditionale pentru structura proiectului
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.dirname(current_dir)
 if root_dir not in sys.path:
@@ -33,23 +34,46 @@ except ImportError:
         RoomFloor = None
     from CollisionDetector import CollisionDetector
 
+
 class SimpleCanvas(QWidget):
+    """
+        Componenta grafica principala (View/Widget) responsabila pentru desenarea
+        si interactiunea cu planul 2D.
+
+        Aceasta clasa gestioneaza:
+        1. Randarea obiectelor (pereti, ferestre, mobila).
+        2. Gestionarea evenimentelor de mouse (click, drag, drop).
+        3. Sistemul de coordonate si transformari (zoom, pan).
+        4. Logica de aliniere (Snapping) si detectie coliziuni.
+        """
+
+    # Semnale pentru comunicarea cu WorkPage (Controller)
     mouse_moved_signal = pyqtSignal(int, int)
     project_changed_signal = pyqtSignal()
     status_message_signal = pyqtSignal(str)
     object_selected_signal = pyqtSignal(object)
 
     def __init__(self, parent=None):
+        """
+                Initializeaza canvas-ul, starea interna si setarile implicite.
+
+                Args:
+                    parent (QWidget): Widget-ul parinte.
+                """
         super().__init__(parent)
         self.pm = ProjectManager()
-        self.objects = []
+        self.objects = []  # Lista tuturor obiectelor din scena
+
+        # Variabile pentru Viewport (Zoom/Pan)
         self.offset_x = 0
         self.offset_y = 0
         self.zoom_scale = 1.0
-        self.current_tool_mode = None
+
+        self.current_tool_mode = None  # 'wall', 'window', 'floor', 'ruler', 'svg_placement'
         self.current_svg_path = None
         self.selected_object = None
 
+        # Stare Panning (deplasare plan)
         self.is_panning = False
         self.last_pan_x = 0
         self.last_pan_y = 0
@@ -69,12 +93,13 @@ class SimpleCanvas(QWidget):
         self.ruler_start = None
         self.ruler_end = None
 
-        # State editare obiecte
+        # Stare Manipulare Obiecte (Move/Rotate/Resize)
         self.is_moving = False
         self.is_rotating = False
         self.is_resizing = False
         self.active_handle = None
 
+        # Variabile auxiliare pentru calcule geometrice
         self.drag_start_pos = QPointF()
         self.obj_start_pos = QPointF()
         self.obj_start_rect = None
@@ -82,35 +107,48 @@ class SimpleCanvas(QWidget):
         self.rotate_start_angle = 0
         self.initial_rotation = 0
 
-        # Configurare Smart Snap
+        # Configurare Smart Snap (Aliniere magnetica)
         self.active_guides = []
         self.snap_threshold = 10
 
+        # Configurare Grila
         self.grid_visible = True
         self.snap_to_grid = True
         self.grid_size = 20
         self.handle_size = 10
 
+        # Setari Widget
         self.setMinimumSize(600, 400)
-        self.setMouseTracking(True)
+        self.setMouseTracking(True)  # Activeaza mouseMoveEvent fara click
         self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet("background-color: white;")
 
     def paintEvent(self, e):
+        """
+                Metoda suprascrisa din QWidget. Este apelata automat la fiecare update().
+                Gestioneaza ordinea de desenare (Z-Order) a elementelor.
+                """
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+
+        # 1. Curatare fundal
         painter.fillRect(self.rect(), Qt.white)
+
+        # 2. Aplicare transformari globale (Pan & Zoom)
         painter.translate(self.offset_x, self.offset_y)
         painter.scale(self.zoom_scale, self.zoom_scale)
 
+        # 3. Desenare Grila
         if self.grid_visible:
             self.draw_grid(painter)
 
+        # 4. Desenare Podele (Stratul cel mai de jos)
         if RoomFloor is not None:
             for obj in self.objects:
                 if isinstance(obj, RoomFloor):
                     self.draw_room_floor(painter, obj)
 
+            # Previzualizare desenare podea
             if self.is_drawing_floor and self.floor_temp_rect:
                 painter.save()
                 painter.setBrush(QBrush(QColor(100, 200, 100, 100)))
@@ -118,16 +156,19 @@ class SimpleCanvas(QWidget):
                 painter.drawRect(self.floor_temp_rect)
                 painter.restore()
 
+        # 5. Desenare Pereti
         for obj in self.objects:
             if isinstance(obj, Wall):
                 self.draw_wall(painter, obj)
 
+        # 6. Desenare Ferestre si Mobilier
         for obj in self.objects:
             if isinstance(obj, Window):
                 self.draw_window(painter, obj)
             elif isinstance(obj, SvgFurnitureObject):
                 obj.draw(painter)
 
+        # 7. Desenare Elemente UI (Selectie, Ghidaje, Rigla)
         if self.selected_object and not isinstance(self.selected_object, Wall):
             self.draw_selection_handles(painter, self.selected_object)
 
@@ -150,6 +191,9 @@ class SimpleCanvas(QWidget):
             self.draw_ruler(painter)
 
     def draw_ruler(self, painter):
+        """
+                Deseneaza instrumentul de masurare (linie punctata si text cu distanta).
+                """
         painter.save()
 
         pen = QPen(Qt.blue, 2)
@@ -157,6 +201,7 @@ class SimpleCanvas(QWidget):
         painter.setPen(pen)
         painter.drawLine(self.ruler_start, self.ruler_end)
 
+        # Desenare marcaje capete (X-uri)
         sx, sy = self.ruler_start.x(), self.ruler_start.y()
         ex, ey = self.ruler_end.x(), self.ruler_end.y()
 
@@ -166,11 +211,13 @@ class SimpleCanvas(QWidget):
         painter.drawLine(QPointF(ex - 5, ey - 5), QPointF(ex + 5, ey + 5))
         painter.drawLine(QPointF(ex - 5, ey + 5), QPointF(ex + 5, ey - 5))
 
+        # Calcul distanta euclidiana
         dx = ex - sx
         dy = ey - sy
         dist_px = math.sqrt(dx ** 2 + dy ** 2)
-        dist_m = dist_px / 100.0
+        dist_m = dist_px / 100.0 # Conversie: 100px = 1 metru
 
+        # Afisare text la mijloc
         mid_x = (sx + ex) / 2
         mid_y = (sy + ey) / 2
 
@@ -198,6 +245,18 @@ class SimpleCanvas(QWidget):
         self.status_message_signal.emit("Rigla: Click si trage pentru a masura.")
 
     def _calculate_smart_snap(self, current_obj, proposed_x, proposed_y):
+        """
+                Algoritmul de aliniere magnetica (Smart Snapping).
+                Compara pozitia propusa a obiectului curent cu marginile tuturor celorlalte obiecte.
+
+                Args:
+                    current_obj: Obiectul mutat.
+                    proposed_x, proposed_y: Coordonatele unde mouse-ul vrea sa duca obiectul.
+
+                Returns:
+                    Tuple (final_x, final_y, guides): Coordonatele ajustate si liniile de desenat.
+                """
+
         snap_x, snap_y = proposed_x, proposed_y
         guides = []
 
@@ -215,6 +274,7 @@ class SimpleCanvas(QWidget):
 
         threshold = self.snap_threshold
 
+        # Iteram prin toate obiectele pentru a gasi puncte de aliniere
         for other in self.objects:
             if other is current_obj:
                 continue
@@ -225,6 +285,7 @@ class SimpleCanvas(QWidget):
             oth_t, oth_b = r.top(), r.bottom()
             oth_cy = r.center().y()
 
+            # Verificari pentru axa X (Stanga, Dreapta, Centru)
             if not snapped_x:
                 if abs(cur_l - oth_l) < threshold:
                     snap_x = oth_l
@@ -249,6 +310,7 @@ class SimpleCanvas(QWidget):
                     snapped_x = True
                     guides.append(QLineF(oth_cx, min(cur_t, oth_t) - 50, oth_cx, max(cur_b, oth_b) + 50))
 
+            # Verificari pentru axa Y (Sus, Jos, Centru)
             if not snapped_y:
                 if abs(cur_t - oth_t) < threshold:
                     snap_y = oth_t
@@ -279,11 +341,16 @@ class SimpleCanvas(QWidget):
         return snap_x, snap_y, guides
 
     def draw_selection_handles(self, painter, obj):
+        """
+                Deseneaza manerele de redimensionare (patratele mici) in colturile obiectului selectat.
+                Tine cont de rotatia obiectului.
+                """
         painter.save()
 
         cx = obj.x + obj.width / 2
         cy = obj.y + obj.height / 2
 
+        # Rotim sistemul de coordonate pentru a desena manerele aliniate cu obiectul
         painter.translate(cx, cy)
         painter.rotate(obj.rotation)
         painter.translate(-cx, -cy)
@@ -296,6 +363,7 @@ class SimpleCanvas(QWidget):
         hs = self.handle_size
         hs2 = hs / 2
 
+        # Coordonate locale pentru manere
         handles = [
             QRectF(rect.left() - hs2, rect.top() - hs2, hs, hs),
             QRectF(rect.right() - hs2, rect.top() - hs2, hs, hs),
@@ -308,6 +376,7 @@ class SimpleCanvas(QWidget):
             painter.drawLine(h.topLeft(), h.bottomRight())
             painter.drawLine(h.topRight(), h.bottomLeft())
 
+        # Contur de selectie
         pen_outline = QPen(Qt.blue, 1, Qt.DashLine)
         painter.setPen(pen_outline)
         painter.setBrush(Qt.NoBrush)
@@ -316,12 +385,17 @@ class SimpleCanvas(QWidget):
         painter.restore()
 
     def _get_mouse_in_object_coords(self, mx, my, obj):
+        """
+                Transforma coordonatele mouse-ului din spatiul scena in spatiul local al obiectului,
+                anuland rotatia acestuia. Util pentru detectia click-ului pe manere.
+                """
         cx = obj.x + obj.width / 2
         cy = obj.y + obj.height / 2
 
         dx = mx - cx
         dy = my - cy
 
+        # Rotatie inversa
         rad = math.radians(-obj.rotation)
         rx = dx * math.cos(rad) - dy * math.sin(rad)
         ry = dx * math.sin(rad) + dy * math.cos(rad)
@@ -332,8 +406,12 @@ class SimpleCanvas(QWidget):
         return QPointF(final_x, final_y)
 
     def _check_handle_click(self, mx, my, obj):
+        """
+                Verifica daca s-a dat click pe un maner de redimensionare.
+                Returns: Codul manerului ('tl', 'tr', 'bl', 'br') sau None.
+                """
         if isinstance(obj, Wall):
-            return None
+            return None # Peretii nu au manere standard de resize
 
         local_pt = self._get_mouse_in_object_coords(mx, my, obj)
         lx, ly = local_pt.x(), local_pt.y()
@@ -351,6 +429,7 @@ class SimpleCanvas(QWidget):
         return None
 
     def draw_grid(self, painter):
+        """ Deseneaza grila de fundal pentru orientare. """
         pen = QPen(QColor(240, 240, 240))
         pen.setWidth(1)
         painter.setPen(pen)
@@ -361,6 +440,7 @@ class SimpleCanvas(QWidget):
             painter.drawLine(start, y, end, y)
 
     def draw_room_floor(self, painter, floor):
+        """ Deseneaza obiectele de tip Podea/Zona. """
         rect = floor.rect
         base_color = getattr(floor, "color", QColor(100, 200, 100, 120))
         if getattr(floor, "is_selected", False):
@@ -371,6 +451,7 @@ class SimpleCanvas(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawRect(rect)
 
+        # Afisare arie in centrul camerei
         area_m2 = getattr(floor, "area_m2", None)
         if area_m2 is not None:
             painter.setPen(QPen(Qt.black))
@@ -381,6 +462,7 @@ class SimpleCanvas(QWidget):
         painter.restore()
 
     def draw_wall(self, painter, wall):
+        """ Deseneaza peretii si cotele (dimensiunile) acestora. """
         color = QColor(64, 64, 64)
         if wall.is_colliding:
             color = QColor(255, 69, 0)
@@ -395,6 +477,7 @@ class SimpleCanvas(QWidget):
         p2 = QPointF(wall.x2, wall.y2)
         painter.drawLine(p1, p2)
 
+        # Desenare text lungime
         painter.save()
 
         dx = wall.x2 - wall.x1
@@ -420,6 +503,7 @@ class SimpleCanvas(QWidget):
         font.setBold(True)
         painter.setFont(font)
 
+        # Desenare fundal text pentru lizibilitate
         metrics = painter.fontMetrics()
         text_width = metrics.width(text)
         text_height = metrics.height()
@@ -436,6 +520,7 @@ class SimpleCanvas(QWidget):
         painter.restore()
 
     def draw_window(self, painter, win):
+        """ Deseneaza ferestrele, tinand cont de rotatie. """
         painter.save()
         center = QPointF(win.x + win.width / 2, win.y + win.height / 2)
         painter.translate(center)
@@ -456,6 +541,11 @@ class SimpleCanvas(QWidget):
         painter.restore()
 
     def check_collisions(self):
+        """
+                Verifica intersectiile dintre toate obiectele din scena.
+                Are complexitate O(N^2). Marcheaza obiectele cu 'is_colliding = True'.
+                Ignora coliziunile valide (ex: Fereastra in Perete).
+                """
         for obj in self.objects:
             obj.is_colliding = False
 
@@ -480,6 +570,7 @@ class SimpleCanvas(QWidget):
                 if intersection.isEmpty():
                     continue
 
+                # Logica specifica pentru ignorarea coliziunilor intentionate
                 is_wall1 = isinstance(obj1, Wall)
                 is_wall2 = isinstance(obj2, Wall)
                 is_win1 = isinstance(obj1, Window)
@@ -493,6 +584,7 @@ class SimpleCanvas(QWidget):
                 if is_wall1 and is_wall2:
                     continue
 
+                # Ferestrele nu se ciocnesc cu mobila
                 if (is_wall1 and is_attach1) or (is_wall2 and is_attach2) or \
                         (is_wall1 and is_attach2) or (is_wall2 and is_attach1):
                     continue
@@ -520,27 +612,36 @@ class SimpleCanvas(QWidget):
                     obj2.is_colliding = True
 
     def mousePressEvent(self, e):
+        """
+                Gestioneaza click-ul mouse-ului.
+                Functionalitati: Selectie, Start Desenare, Start Drag & Drop, Pan (Middle Click).
+                """
+        # Pan cu butonul din mijloc
         if e.button() == Qt.MiddleButton:
             self.is_panning = True
             self.last_pan_x, self.last_pan_y = e.x(), e.y()
             self.setCursor(Qt.ClosedHandCursor)
             return
 
+        # Conversie coordonate ecran -> coordonate scena
         wx = (e.x() - self.offset_x) / self.zoom_scale
         wy = (e.y() - self.offset_y) / self.zoom_scale
 
+        # Calcul coordonate Grid Snap
         snapped_wx = round(wx / self.grid_size) * self.grid_size
         snapped_wy = round(wy / self.grid_size) * self.grid_size
 
         pos_pt = QPointF(wx, wy)
         snap_pt = QPointF(snapped_wx, snapped_wy) if self.snap_to_grid else pos_pt
 
+        # 1. Unelte Active (Prioritate 1)
         if self.current_tool_mode == "ruler" and e.button() == Qt.LeftButton:
             self.is_measuring = True
             self.ruler_start = snap_pt
             self.ruler_end = snap_pt
             return
 
+        # 2. Rotire manuala (Click Dreapta)
         if e.button() == Qt.RightButton and self.selected_object:
             if not isinstance(self.selected_object, Wall):
                 self.is_rotating = True
@@ -549,6 +650,7 @@ class SimpleCanvas(QWidget):
                 self.initial_rotation = self.selected_object.rotation
                 return
 
+        # 3. Interactiuni Selectie (Click Stanga)
         if e.button() == Qt.LeftButton:
             if self.current_tool_mode == "wall":
                 self.is_drawing_wall = True
@@ -581,6 +683,7 @@ class SimpleCanvas(QWidget):
                     self.drag_start_pos = self._get_mouse_in_object_coords(wx, wy, self.selected_object)
                     return
 
+            # Hit Testing pentru selectie obiecte
             clicked_obj = None
 
             for obj in reversed(self.objects):
@@ -599,6 +702,7 @@ class SimpleCanvas(QWidget):
 
             self.select_object(clicked_obj)
 
+            # Initiere mutare obiect
             if clicked_obj:
                 self.is_moving = True
                 self.drag_start_pos = pos_pt
@@ -611,10 +715,15 @@ class SimpleCanvas(QWidget):
             self.update()
 
     def mouseMoveEvent(self, e):
+        """
+                Gestioneaza miscarea mouse-ului.
+                Functionalitati: Update cursor, previzualizare desenare, mutare obiecte cu Smart Snap, redimensionare.
+                """
         wx = (e.x() - self.offset_x) / self.zoom_scale
         wy = (e.y() - self.offset_y) / self.zoom_scale
         self.mouse_moved_signal.emit(int(wx), int(wy))
 
+        # Logica schimbare cursor
         if not self.is_resizing and not self.is_moving and not self.is_rotating and self.selected_object:
             handle = self._check_handle_click(wx, wy, self.selected_object)
             if handle in ['tl', 'br']:
@@ -626,6 +735,7 @@ class SimpleCanvas(QWidget):
         elif not self.is_panning and self.current_tool_mode is None and not self.is_resizing:
             self.setCursor(Qt.ArrowCursor)
 
+        # Logica Pan
         if self.is_panning:
             self.offset_x += e.x() - self.last_pan_x
             self.offset_y += e.y() - self.last_pan_y
@@ -636,6 +746,7 @@ class SimpleCanvas(QWidget):
         snap_wx = round(wx / self.grid_size) * self.grid_size
         snap_wy = round(wy / self.grid_size) * self.grid_size
 
+        # Logica Masurare
         if self.is_measuring:
             tgt = QPointF(snap_wx, snap_wy) if self.snap_to_grid else QPointF(wx, wy)
             self.ruler_end = tgt
@@ -648,6 +759,7 @@ class SimpleCanvas(QWidget):
             self.update()
             return
 
+        # Logica Desenare
         if self.is_drawing_wall:
             self.wall_temp_end = QPointF(snap_wx, snap_wy) if self.snap_to_grid else QPointF(wx, wy)
             self.update()
@@ -664,6 +776,7 @@ class SimpleCanvas(QWidget):
             self.update()
             return
 
+        # Logica Mutare Obiecte
         if self.is_moving and self.selected_object:
             dx = wx - self.drag_start_pos.x()
             dy = wy - self.drag_start_pos.y()
@@ -678,6 +791,7 @@ class SimpleCanvas(QWidget):
                 self.selected_object.x2 = ox2 + dx
                 self.selected_object.y2 = oy2 + dy
             else:
+                # Obiectele folosesc Smart Snap
                 proposed_x = self.obj_start_pos.x() + dx
                 proposed_y = self.obj_start_pos.y() + dy
 
@@ -686,6 +800,7 @@ class SimpleCanvas(QWidget):
                 is_snapped_x = (final_x != proposed_x)
                 is_snapped_y = (final_y != proposed_y)
 
+                # Fallback la Grid Snap daca nu exista Smart Snap
                 if self.snap_to_grid and not is_snapped_x:
                     final_x = round(proposed_x / self.grid_size) * self.grid_size
 
@@ -701,6 +816,7 @@ class SimpleCanvas(QWidget):
             self.update()
             return
 
+        # Logica Resize
         if self.is_resizing and self.selected_object and self.obj_start_rect:
             local_mouse = self._get_mouse_in_object_coords(wx, wy, self.selected_object)
             dx = local_mouse.x() - self.drag_start_pos.x()
@@ -712,6 +828,7 @@ class SimpleCanvas(QWidget):
             ox, oy, ow, oh = self.obj_start_rect
             new_x, new_y, new_w, new_h = ox, oy, ow, oh
 
+            # Calculare noi dimensiuni in functie de maner
             if self.active_handle == 'br':
                 new_w, new_h = ow + dx, oh + dy
             elif self.active_handle == 'bl':
@@ -732,6 +849,7 @@ class SimpleCanvas(QWidget):
             self.update()
             return
 
+        # Logica Rotire
         if self.is_rotating and self.selected_object:
             rect = self.selected_object.rect
             curr_angle = self._angle_to_mouse(rect.center().x(), rect.center().y(), wx, wy)
@@ -741,6 +859,10 @@ class SimpleCanvas(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, e):
+        """
+                Gestioneaza eliberarea butonului mouse-ului.
+                Finalizeaza actiunile (desenare, mutare, resize).
+                """
         self.active_guides = []
 
         if self.is_measuring:
@@ -790,6 +912,11 @@ class SimpleCanvas(QWidget):
         self.update()
 
     def wheelEvent(self, e):
+        """
+                Gestioneaza rotita mouse-ului.
+                Ctrl + Scroll -> Zoom.
+                Scroll simplu -> Rotire obiect selectat.
+                """
         if e.modifiers() & Qt.ControlModifier:
             old_wx = (e.x() - self.offset_x) / self.zoom_scale
             old_wy = (e.y() - self.offset_y) / self.zoom_scale
@@ -817,18 +944,21 @@ class SimpleCanvas(QWidget):
             super().wheelEvent(e)
 
     def set_tool_wall(self):
+        """ Activeaza modul desenare perete. """
         self.current_tool_mode = "wall"
         self.select_object(None)
         self.setCursor(Qt.CrossCursor)
         self.status_message_signal.emit("Unealta Perete: Click si trage.")
 
     def set_tool_window(self):
+        """ Activeaza modul plasare fereastra. """
         self.current_tool_mode = "window"
         self.select_object(None)
         self.setCursor(Qt.CrossCursor)
         self.status_message_signal.emit("Unealta Fereastră: Click pentru a plasa.")
 
     def set_tool_svg(self, path):
+        """ Activeaza modul plasare mobilier SVG. """
         self.current_tool_mode = "svg_placement"
         self.current_svg_path = path
         self.select_object(None)
@@ -836,6 +966,7 @@ class SimpleCanvas(QWidget):
         self.status_message_signal.emit("Unealta Mobilier: Click pentru a plasa.")
 
     def set_tool_floor(self):
+        """ Activeaza modul desenare podea/zona. """
         if RoomFloor is None:
             self.status_message_signal.emit("RoomFloor nu exista in proiect (import esuat).")
             self.current_tool_mode = None
@@ -874,6 +1005,7 @@ class SimpleCanvas(QWidget):
         self.update()
 
     def dist_to_segment(self, p, wall):
+        """ Calculeaza distanta de la un punct P la segmentul de dreapta definit de perete. """
         x, y = p.x(), p.y()
         x1, y1, x2, y2 = wall.x1, wall.y1, wall.x2, wall.y2
         A = x - x1
@@ -894,9 +1026,11 @@ class SimpleCanvas(QWidget):
         return math.sqrt((x - xx) ** 2 + (y - yy) ** 2)
 
     def _angle_to_mouse(self, cx, cy, mx, my):
+        """ Calculeaza unghiul in grade dintre centrul obiectului si pozitia mouse-ului. """
         return math.degrees(math.atan2(my - cy, mx - cx))
 
     def delete_selection(self):
+        """ Sterge obiectul selectat curent. """
         if self.selected_object and self.selected_object in self.objects:
             self.objects.remove(self.selected_object)
             self.select_object(None)
@@ -905,12 +1039,18 @@ class SimpleCanvas(QWidget):
             self.update()
 
     def clear_scene(self):
+        """ Sterge toate obiectele din scena. """
         self.objects.clear()
         self.select_object(None)
         self.project_changed_signal.emit()
         self.update()
 
     def load_layout_template(self, template_type):
+        """
+                Incarca un sablon predefinit de apartament.
+                Args:
+                    template_type (str): Identificatorul sablonului (ex: 'APARTAMENT_STUDIO').
+                """
         self.objects.clear()
 
         if template_type == "APARTAMENT_STUDIO":
@@ -985,6 +1125,11 @@ class SimpleCanvas(QWidget):
         self.status_message_signal.emit(f"Sablon {template_type} incarcat.")
 
     def get_content_bbox(self):
+        """
+                Calculeaza dreptunghiul minim care cuprinde toate obiectele (Bounding Box).
+                Util pentru exportul imaginilor.
+                Returns: QRectF
+                """
         if not self.objects:
             return QRectF(0, 0, 800, 600)  # Default size
 
@@ -1018,6 +1163,12 @@ class SimpleCanvas(QWidget):
                       (max_x - min_x) + 2 * padding, (max_y - min_y) + 2 * padding)
 
     def save_to_image(self, file_path):
+        """
+                Exporta continutul canvas-ului intr-un fisier imagine.
+                Args:
+                    file_path (str): Calea completa a fisierului de destinatie.
+                Returns: bool (Succes/Esec)
+                """
         bbox = self.get_content_bbox()
 
         width = int(math.ceil(bbox.width()))
@@ -1048,4 +1199,3 @@ class SimpleCanvas(QWidget):
 
         painter.end()
         return image.save(file_path)
-

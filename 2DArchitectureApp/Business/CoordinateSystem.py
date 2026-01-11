@@ -3,6 +3,11 @@ from typing import Tuple, List
 
 
 class CoordinateSystem:
+    """
+        Ofera metode utilitare pentru gestionarea sistemului de coordonate,
+        conversii unitati (pixeli <-> metri) si calcule geometrice vectoriale.
+        """
+
     def __init__(self, grid_size: int = 10, scale: float = 1.0):
         self.grid_size = grid_size
         self.scale = scale
@@ -10,12 +15,15 @@ class CoordinateSystem:
         self.units_per_cm = 1
 
     def pixels_to_real_units(self, pixels: float) -> float:
+        """ Converteste pixelii de pe ecran in unitati reale bazate pe scara curenta. """
         return (pixels / self.grid_size) * self.scale
 
     def real_units_to_pixels(self, units: float) -> float:
+        """ Converteste unitatile reale inapoi in pixeli pentru randare. """
         return (units * self.grid_size) / self.scale
 
     def snap_to_grid(self, x: float, y: float) -> Tuple[float, float]:
+        """ Rotunjeste coordonatele la cel mai apropiat punct al grilei. """
         snapped_x = round(x / self.grid_size) * self.grid_size
         snapped_y = round(y / self.grid_size) * self.grid_size
         return snapped_x, snapped_y
@@ -24,13 +32,16 @@ class CoordinateSystem:
         return self.snap_to_grid(point[0], point[1])
 
     def distance(self, x1: float, y1: float, x2: float, y2: float) -> float:
+        """ Calculeaza distanta Euclidiana intre doua puncte (pixeli). """
         return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
     def distance_real(self, x1: float, y1: float, x2: float, y2: float) -> float:
+        """ Calculeaza distanta reala intre doua puncte de pe ecran. """
         pixel_distance = self.distance(x1, y1, x2, y2)
         return self.pixels_to_real_units(pixel_distance)
 
     def angle_between_points(self, x1: float, y1: float, x2: float, y2: float) -> float:
+        """ Calculeaza unghiul in grade dintre doua puncte. """
         dx = x2 - x1
         dy = y2 - y1
         angle_rad = math.atan2(dy, dx)
@@ -39,6 +50,10 @@ class CoordinateSystem:
 
     def rotate_point(self, x: float, y: float, center_x: float, center_y: float,
                      angle_deg: float) -> Tuple[float, float]:
+        """
+                Roteste un punct (x, y) in jurul unui centru (center_x, center_y) cu un unghi dat.
+                Foloseste matricea de rotatie 2D.
+                """
         angle_rad = math.radians(angle_deg)
         translated_x = x - center_x
         translated_y = y - center_y
@@ -83,6 +98,7 @@ class CoordinateSystem:
         return vertical_lines, horizontal_lines
 
     def format_distance(self, distance_cm: float) -> str:
+        """ Formateaza o distanta pentru afisare (ex: '2.50 m' sau '80.0 cm'). """
         if distance_cm >= 100:
             meters = distance_cm / 100
             return f"{meters:.2f} m"

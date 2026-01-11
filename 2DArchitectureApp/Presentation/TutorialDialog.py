@@ -6,7 +6,16 @@ from PyQt5.QtCore import Qt
 
 
 class TutorialDialog(QDialog):
+    """
+        Fereastra de dialog non-modala care afiseaza instructiuni de utilizare.
+        Foloseste un QSplitter pentru a separa lista de subiecte de continutul HTML.
+        """
+
     def __init__(self, parent=None):
+        """
+                Initializeaza interfata dialogului de ajutor.
+                Seteaza flag-ul WindowStaysOnTopHint pentru a mentine fereastra vizibila.
+                """
         super().__init__(parent)
         self.setWindowTitle("Ghid Interactiv - Architect App")
         self.resize(800, 500)
@@ -21,6 +30,7 @@ class TutorialDialog(QDialog):
 
         splitter = QSplitter(Qt.Horizontal)
 
+        # Lista de subiecte (Stanga)
         self.topic_list = QListWidget()
         self.topic_list.setFixedWidth(200)
         self.topic_list.setStyleSheet("""
@@ -30,6 +40,7 @@ class TutorialDialog(QDialog):
         """)
         splitter.addWidget(self.topic_list)
 
+        # Zona de continut (Dreapta)
         self.content_viewer = QTextBrowser()
         self.content_viewer.setStyleSheet(
             "background: white; padding: 15px; font-size: 14px; border: 1px solid #BDC3C7;")
@@ -43,6 +54,7 @@ class TutorialDialog(QDialog):
         btn_close.setStyleSheet("background: #2ECC71; color: white; font-weight: bold; padding: 8px;")
         layout.addWidget(btn_close)
 
+        # Definirea continutului HTML pentru fiecare subiect
         self.topics = {
             "Introducere": """
                 <h3>Bine ai venit!</h3>
@@ -132,6 +144,7 @@ class TutorialDialog(QDialog):
         self.topic_list.setCurrentRow(0)
 
     def display_topic(self, row):
+        """ Afiseaza continutul HTML asociat subiectului selectat din lista. """
         key = self.topic_list.item(row).text()
         content = self.topics.get(key, "")
         self.content_viewer.setHtml(content)
