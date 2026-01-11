@@ -34,6 +34,16 @@ except ImportError:
         RoomFloor = None
     from CollisionDetector import CollisionDetector
 
+try:
+    from Business.Commands import (
+        UndoStack, AddObjectCommand, DeleteObjectCommand,
+        MoveObjectCommand, MoveWallCommand, RotateObjectCommand, ResizeObjectCommand
+    )
+except ImportError:
+    from Commands import (
+        UndoStack, AddObjectCommand, DeleteObjectCommand,
+        MoveObjectCommand, MoveWallCommand, RotateObjectCommand, ResizeObjectCommand
+    )
 
 class SimpleCanvas(QWidget):
     """
@@ -61,6 +71,11 @@ class SimpleCanvas(QWidget):
                     parent (QWidget): Widget-ul parinte.
                 """
         super().__init__(parent)
+
+        self.undo_stack = UndoStack()
+
+        self.state_before_action = None
+
         self.pm = ProjectManager()
         self.objects = []  # Lista tuturor obiectelor din scena
 
@@ -645,6 +660,7 @@ class SimpleCanvas(QWidget):
         if e.button() == Qt.RightButton and self.selected_object:
             if not isinstance(self.selected_object, Wall):
                 self.is_rotating = True
+                self.state_before_action = self.selected_object.rotation
                 rect = self.selected_object.rect
                 self.rotate_start_angle = self._angle_to_mouse(rect.center().x(), rect.center().y(), wx, wy)
                 self.initial_rotation = self.selected_object.rotation
@@ -678,6 +694,8 @@ class SimpleCanvas(QWidget):
                 if handle:
                     self.is_resizing = True
                     self.active_handle = handle
+                    self.state_before_action = (self.selected_object.x, self.selected_object.y,
+                                                self.selected_object.width, self.selected_object.height)
                     self.obj_start_rect = (self.selected_object.x, self.selected_object.y,
                                            self.selected_object.width, self.selected_object.height)
                     self.drag_start_pos = self._get_mouse_in_object_coords(wx, wy, self.selected_object)
@@ -709,8 +727,10 @@ class SimpleCanvas(QWidget):
 
                 if isinstance(clicked_obj, Wall):
                     self.wall_coords_start = (clicked_obj.x1, clicked_obj.y1, clicked_obj.x2, clicked_obj.y2)
+                    self.state_before_action = (clicked_obj.x1, clicked_obj.y1, clicked_obj.x2, clicked_obj.y2)
                 else:
                     self.obj_start_pos = QPointF(clicked_obj.x, clicked_obj.y)
+                    self.state_before_action = (clicked_obj.x, clicked_obj.y)
 
             self.update()
 
@@ -877,6 +897,11 @@ class SimpleCanvas(QWidget):
             if self.wall_start_pt != self.wall_temp_end:
                 new_wall = Wall(self.wall_start_pt.x(), self.wall_start_pt.y(),
                                 self.wall_temp_end.x(), self.wall_temp_end.y())
+
+                cmd = AddObjectCommand(self.objects, new_wall)
+                cmd.execute()
+                self.undo_stack.push(cmd)
+
                 self.objects.append(new_wall)
                 self.select_object(new_wall)
                 self.check_collisions()
@@ -890,6 +915,8 @@ class SimpleCanvas(QWidget):
                     new_floor = RoomFloor(self.floor_temp_rect.x(), self.floor_temp_rect.y(),
                                           self.floor_temp_rect.width(), self.floor_temp_rect.height())
                     self.objects.insert(0, new_floor)
+                    self.undo_stack.push(cmd)
+
                     self.select_object(new_floor)
                     self.project_changed_signal.emit()
                 except:
@@ -899,6 +926,31 @@ class SimpleCanvas(QWidget):
             self.current_tool_mode = None
             self.setCursor(Qt.ArrowCursor)
             self.update()
+
+        if self.is_moving and self.selected_object and self.state_before_action:
+            if isinstance(self.selected_object, Wall):
+                new_coords = (self.selected_object.x1, self.selected_object.y1,
+                              self.selected_object.x2, self.selected_object.y2)
+                if new_coords != self.state_before_action:
+                    cmd = MoveWallCommand(self.selected_object, self.state_before_action, new_coords)
+                    self.undo_stack.push(cmd)
+            else:
+                current_pos = (self.selected_object.x, self.selected_object.y)
+                if current_pos != self.state_before_action:
+                    cmd = MoveObjectCommand(self.selected_object, self.state_before_action, current_pos)
+                    self.undo_stack.push(cmd)
+
+        if self.is_resizing and self.selected_object and self.state_before_action:
+            current_rect = (self.selected_object.x, self.selected_object.y,
+                            self.selected_object.width, self.selected_object.height)
+            if current_rect != self.state_before_action:
+                cmd = ResizeObjectCommand(self.selected_object, self.state_before_action, current_rect)
+                self.undo_stack.push(cmd)
+
+        if self.is_rotating and self.selected_object and self.state_before_action is not None:
+            if abs(self.selected_object.rotation - self.state_before_action) > 0.1:
+                cmd = RotateObjectCommand(self.selected_object, self.state_before_action, self.selected_object.rotation)
+                self.undo_stack.push(cmd)
 
         if e.button() == Qt.MiddleButton:
             self.is_panning = False
@@ -986,7 +1038,10 @@ class SimpleCanvas(QWidget):
             new_obj.move_to(QPointF(x, y))
 
         if new_obj:
-            self.objects.append(new_obj)
+            cmd = AddObjectCommand(self.objects, new_obj)
+            cmd.execute()
+            self.undo_stack.push(cmd)
+
             self.select_object(new_obj)
             self.check_collisions()
             self.project_changed_signal.emit()
@@ -1032,11 +1087,28 @@ class SimpleCanvas(QWidget):
     def delete_selection(self):
         """ Sterge obiectul selectat curent. """
         if self.selected_object and self.selected_object in self.objects:
-            self.objects.remove(self.selected_object)
+            cmd = DeleteObjectCommand(self.objects, self.selected_object)
+            cmd.execute()
+            self.undo_stack.push(cmd)
+
             self.select_object(None)
             self.check_collisions()
             self.project_changed_signal.emit()
             self.update()
+
+    def trigger_undo(self):
+        self.undo_stack.undo()
+        self.check_collisions()
+        self.project_changed_signal.emit()
+        self.update()
+        self.status_message_signal.emit("Undo efectuat.")
+
+    def trigger_redo(self):
+        self.undo_stack.redo()
+        self.check_collisions()
+        self.project_changed_signal.emit()
+        self.update()
+        self.status_message_signal.emit("Redo efectuat.")
 
     def clear_scene(self):
         """ Sterge toate obiectele din scena. """

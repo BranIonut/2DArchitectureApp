@@ -91,6 +91,17 @@ class WorkPage(Page):
         QShortcut(QKeySequence("Delete"), self).activated.connect(self.canvas.delete_selection)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self.action_cancel)
 
+        # Scurtaturi Undo / Redo
+        undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
+        undo_shortcut.activated.connect(self.canvas.trigger_undo)
+
+        # Pentru Redo, standardul este Ctrl+Y sau Ctrl+Shift+Z
+        redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
+        redo_shortcut.activated.connect(self.canvas.trigger_redo)
+
+        redo_shortcut_alt = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
+        redo_shortcut_alt.activated.connect(self.canvas.trigger_redo)
+
         self.refresh_stats()
 
     def create_header(self):
